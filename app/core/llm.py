@@ -54,3 +54,37 @@ def get_chat_model() -> Any:
         temperature=settings.groq_temperature,
         max_retries=settings.groq_max_retries,
     )
+
+
+def reset_llm_client_caches() -> None:
+    """Drops every cached chat-model client: this factory's own `get_chat_model`
+    cache, plus each LLM-calling agent's own `.with_structured_output(...)`-wrapped
+    cache (`_get_structured_llm`/`_get_ranking_llm` in supply_planning_agent,
+    allocation_agent, decision_review_agent, final_recommendation_agent).
+
+    Only long-lived processes that call `asyncio.run()` more than once need this
+    (e.g. the Streamlit demo dashboard, which reruns the whole workflow on every
+    click within one process) - each cached client holds an httpx-based async
+    client that can end up bound to whatever event loop was running when it was
+    first built. `asyncio.run()` tears its loop down when it returns, so a client
+    left over from a previous run risks a stale-loop error ("Event loop is
+    closed") the next time it's touched. Calling this at the end of a run drops
+    the references while the loop that created them is still alive, so cleanup
+    happens now rather than being left to garbage collection at some later,
+    unpredictable point (possibly after the loop has already closed). The CLI
+    script and the FastAPI server never need this - each keeps exactly one event
+    loop alive for its whole process lifetime.
+    """
+    get_chat_model.cache_clear()
+
+    from app.agents import (
+        allocation_agent,
+        decision_review_agent,
+        final_recommendation_agent,
+        supply_planning_agent,
+    )
+
+    supply_planning_agent._get_structured_llm.cache_clear()
+    allocation_agent._get_ranking_llm.cache_clear()
+    decision_review_agent._get_structured_llm.cache_clear()
+    final_recommendation_agent._get_structured_llm.cache_clear()

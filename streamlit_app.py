@@ -22,11 +22,38 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.agents.graph import run_planning_workflow  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
+from app.core.llm import reset_llm_client_caches  # noqa: E402
 from app.database.repositories import ProductRepository, StoreRepository, TerminalRepository  # noqa: E402
-from app.database.session import AsyncSessionLocal  # noqa: E402
+from app.database.session import AsyncSessionLocal, engine  # noqa: E402
 from app.schemas.planning import PlanningRequest  # noqa: E402
 
 st.set_page_config(page_title="Supply Chain Planning Demo", layout="wide")
+
+
+def _run_async(coro):
+    """Runs `coro` via a fresh `asyncio.run()` call, then tears down every
+    cached async resource (DB engine pool, LLM clients) before returning.
+
+    Streamlit reruns this whole script - and so calls `asyncio.run()` fresh -
+    on every click within one long-lived process, unlike the CLI script or the
+    FastAPI server, which each keep a single event loop alive for their whole
+    lifetime. A DB connection or LLM client left over from one call would
+    otherwise carry a stale reference into the next call's brand new loop,
+    surfacing as a confusing "Event loop is closed" failure. Tearing down here,
+    while this loop is still open, means cleanup happens now rather than being
+    left to garbage collection at some later, unpredictable point (possibly
+    after the loop has already closed) - so every async entry point in this
+    file (`load_scope_options`, `run_workflow`) goes through this.
+    """
+
+    async def _wrapped():
+        try:
+            return await coro
+        finally:
+            await engine.dispose()
+            reset_llm_client_caches()
+
+    return asyncio.run(_wrapped())
 
 
 @st.cache_data(ttl=60)
@@ -42,11 +69,11 @@ def load_scope_options():
                 len(terminals),
             )
 
-    return asyncio.run(_load())
+    return _run_async(_load())
 
 
 def run_workflow(request: PlanningRequest) -> dict:
-    return asyncio.run(run_planning_workflow(request))
+    return _run_async(run_planning_workflow(request))
 
 
 def _df(models: list) -> pd.DataFrame:
