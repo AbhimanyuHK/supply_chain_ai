@@ -2,8 +2,10 @@
 
 Enterprise supply chain planning system: demand forecasting, inventory analysis, supply
 allocation, cost optimization, and constraint validation, orchestrated by a LangGraph
-agent workflow reasoning through Groq. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-for the module layout and design decisions.
+agent workflow reasoning through Groq (or a local Ollama model — see step 3a) with a
+Streamlit demo dashboard (step 8) and GitHub Actions CI (step 11) testing both engines.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module layout and design
+decisions.
 
 > **Status: all 10 Phase 1 agents are built** (Modules 1-10) — every agent in the spec's
 > 13-agent list except Phase 2's Fleet Assignment/Route Planning/ETA Prediction/Exception
@@ -13,7 +15,8 @@ for the module layout and design decisions.
 > loops back to Supply Planning for replanning) → Decision Review (Groq) → Final
 > Recommendation (Groq) end to end, producing a full shipment plan with business
 > explanation, risk assessment, alternatives, confidence score, and expected
-> inventory/service level. See the "Current status" section at the bottom for exactly
+> inventory/service level. Every Groq call can be swapped for a local Ollama model with
+> one `.env` change (step 3a). See the "Current status" section at the bottom for exactly
 > what's built vs. still open (Phase 2, some REST endpoints, a couple of explicitly
 > out-of-scope constraints).
 
@@ -71,6 +74,32 @@ this writing). Running the full test suite plus a few manual workflow runs in th
 can exhaust it — you'll see `groq.RateLimitError` (429). This is an external quota, not a
 bug; it clears after the daily window resets (the error message includes a retry-after
 estimate).
+
+### 3a. Switching reasoning engines: Groq vs. local Ollama
+
+Every LLM-calling agent (Supply Planning, Allocation, Decision Review, Final
+Recommendation) goes through one factory, `app/core/llm.py`, so which reasoning engine
+they use is a one-line `.env` change, not a code change. This exists specifically so a
+Groq quota outage (see above) doesn't block you — switch to a fully local model and keep
+working:
+
+```
+# .env
+LLM_PROVIDER=groq   # default: cloud, needs GROQ_API_KEY
+# LLM_PROVIDER=ollama   # fully local, no API key/quota - needs `ollama serve` running
+
+OLLAMA_MODEL=mistral            # must already be pulled (`ollama pull mistral`) and
+                                 # support tool-calling (check with `ollama show <model>`)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_TEMPERATURE=0.1
+```
+
+To use Ollama: install [Ollama](https://ollama.com), run `ollama serve` (or let the
+desktop app run it), pull a tool-calling-capable model (`ollama pull mistral`), then set
+`LLM_PROVIDER=ollama` in `.env`. Local inference is much slower than Groq (minutes, not
+seconds, per LLM call) but has no daily quota. Every trace/log line names the actual
+model that ran (e.g. `via ollama/mistral` vs `via llama-3.3-70b-versatile`), so output
+never misattributes which engine produced it.
 
 ## 4. Run database migrations
 
@@ -148,7 +177,44 @@ curl http://127.0.0.1:8000/health
 
 Expect `{"status": "ok", "dependencies": {"database": "ok"}}`.
 
-## 8. (Optional) Switch to Postgres via Docker
+## 8. Run the Streamlit demo dashboard
+
+A read-only dashboard for demoing the full pipeline to business stakeholders — shows the
+input master data, every intermediate agent output (forecast, shortages, candidate plans,
+allocation scenarios, cost breakdown, constraint validation status), and the final
+recommendation, all in one place.
+
+It has its own virtual environment (`venv-ui/`), separate from the API's `venv/`. This is
+required, not just tidiness: `fastapi==0.115.6` (used by the API) pins `starlette<0.42`,
+while Streamlit 1.60's dashboard code needs a starlette new enough to export
+`DEFAULT_EXCLUDED_CONTENT_TYPES` from `starlette.middleware.gzip` — a symbol added well
+after 0.42. The two constraints can't be satisfied in one environment, so
+`requirements-ui.txt` installs its own dependency set (deliberately *not* `-r
+requirements.txt`) into a dedicated venv:
+
+```bash
+python -m venv venv-ui
+venv-ui\Scripts\python.exe -m pip install --upgrade pip
+venv-ui\Scripts\python.exe -m pip install -r requirements-ui.txt
+```
+
+Then run it (uses whichever `LLM_PROVIDER` is set in `.env`, same as the CLI script):
+
+```bash
+venv-ui\Scripts\streamlit.exe run streamlit_app.py
+```
+
+Open the URL it prints (default `http://localhost:8501`), pick a scope (or leave it
+empty for "all stores/products") in the sidebar, and click **Run planning workflow**.
+Three tabs show the results: **Input Data** (master data snapshot), **Intermediate
+Data** (forecast → shortages → candidate plans → allocation scenarios → cost breakdown →
+constraint validation, one section per pipeline stage), and **Final Plan** (decision
+review scores, the selected recommendation, shipment plan, expected inventory, and
+alternatives). A workflow failure (e.g. Groq quota exhausted) is caught and shown as an
+error banner rather than crashing the app — switch `LLM_PROVIDER=ollama` in `.env` and
+rerun if that happens.
+
+## 9. (Optional) Switch to Postgres via Docker
 
 If you have Docker installed:
 
@@ -165,7 +231,7 @@ Postgres container instead of SQLite, change `DATABASE_URL` in `.env` to:
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/supply_chain
 ```
 
-## 9. Run the tests
+## 10. Run the tests
 
 ```bash
 venv\Scripts\python.exe -m pytest -v
@@ -187,15 +253,38 @@ testable function, independent of the Groq synthesis call), and other end-to-end
 runs — all against a real (SQLite) database, the real Chronos model, and (where relevant)
 real Groq calls, nothing is mocked.
 
-**Tests that call Groq are automatically skipped if `GROQ_API_KEY` isn't set** (`skipif`
-on `get_settings().groq_api_key`), so the full suite still runs without a key — you'll just
-see a handful of `SKIPPED` instead of `PASSED`. With a key set and quota available, all 86
-run for real, though running the full suite repeatedly in one day can trip Groq's
-free-tier daily token cap (see the rate-limit note in step 3) — a `RateLimitError` there is
-an external quota, not a test failure; the deterministic logic each Groq-calling agent
-depends on is covered by separate non-Groq tests, so a quota outage only blocks the
-handful of tests that need a live LLM response, not verification of the surrounding logic.
-First test run pays the same one-time Chronos model download/load cost as step 6.
+**Tests that call an LLM are automatically skipped unless a reasoning engine is actually
+configured** (`tests/conftest.py::requires_llm_configured` — true when either
+`GROQ_API_KEY` is set, or `LLM_PROVIDER=ollama` with a local server running), so the full
+suite still runs with neither — you'll just see a handful of `SKIPPED` instead of
+`PASSED`. Set `LLM_PROVIDER=ollama` (with `ollama serve` running) to have those same
+tests exercise the local model instead of Groq — this is exactly how CI's Ollama job
+(see below) gets real coverage without a Groq key. With a key set and quota available,
+all 85 run for real against Groq, though running the full suite repeatedly in one day can
+trip Groq's free-tier daily token cap (see the rate-limit note in step 3) — a
+`RateLimitError` there is an external quota, not a test failure; the deterministic logic
+each LLM-calling agent depends on is covered by separate non-LLM tests, so a quota outage
+only blocks the handful of tests that need a live LLM response, not verification of the
+surrounding logic. First test run pays the same one-time Chronos model download/load cost
+as step 6.
+
+## 11. Continuous Integration
+
+`.github/workflows/ci.yml` runs the full pytest suite on every push/PR to `main` (and on
+manual dispatch), as two independent jobs so both supported reasoning engines get real
+coverage:
+
+- **Tests (Groq)** — installs `requirements-dev.txt` and runs `pytest` with
+  `GROQ_API_KEY` from a repository secret of the same name. If the secret isn't set, the
+  Groq-gated tests just skip (see step 10) — the job doesn't fail.
+- **Tests (Ollama, local)** — installs Ollama on the runner itself, starts `ollama
+  serve`, pulls `mistral`, sets `LLM_PROVIDER=ollama`, and runs the same `pytest` suite —
+  no secret needed, since it's fully local, matching how you'd run it on your own machine
+  during a Groq outage.
+
+To enable the Groq job's real coverage, add a repository secret named `GROQ_API_KEY`
+(Settings → Secrets and variables → Actions). Nothing else needs configuring — the
+workflow has no other secrets or external dependencies.
 
 ---
 
@@ -255,8 +344,9 @@ Phase 2's fleet/route/ETA agents:
   calibrated confidence score (which drops noticeably if Module 8 had to fall back to a
   constraint-violating plan) — is Groq's job, given those real metrics. Wired as the
   graph's ninth and final node.
-- 86 passing tests (Groq-dependent ones auto-skip without a key; each Groq-calling agent's
-  deterministic logic has its own separately-testable, non-Groq-dependent coverage)
+- 85 passing tests (LLM-dependent ones auto-skip unless Groq or Ollama is configured; each
+  LLM-calling agent's deterministic logic has its own separately-testable, non-LLM-dependent
+  coverage)
 - A manual run script (`scripts/run_planning_workflow.py`) exercising the full 9-node
   pipeline end to end
 

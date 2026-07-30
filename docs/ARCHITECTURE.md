@@ -1,11 +1,13 @@
-# Architecture — Modules 1-10 (Phase 1 complete)
+# Architecture — Modules 1-10 (Phase 1 complete) + cross-cutting additions
 
 ## Layout
 
 ```
 app/
   core/          config.py (Settings), logging.py (loguru setup), exceptions.py,
-                 business_rules.py (loads config/business_rules.yaml)
+                 business_rules.py (loads config/business_rules.yaml), llm.py
+                 (Groq/Ollama reasoning-engine factory — see "Reasoning engine
+                 abstraction" below)
   database/      base.py (declarative Base), session.py (async engine/session/get_db)
     repositories/  one per entity (store, terminal, product, inventory, demand_history,
                    fleet, distance_matrix) — session injected via constructor (DI)
@@ -35,12 +37,18 @@ app/
 config/          business_rules.yaml — editable business rules (no DB table for these)
 alembic/         env.py (async-aware), versions/0001_initial_schema.py
 scripts/         seed_data.py, run_planning_workflow.py
-tests/           conftest.py + test_config, test_models, test_health_api, test_repositories,
-                 test_master_data_service, test_agents_graph, test_chronos_forecaster,
-                 test_inventory_analysis_agent, test_supply_planning_agent,
-                 test_allocation_agent, test_cost_optimization_agent,
-                 test_constraint_validation_agent, test_decision_review_agent,
-                 test_final_recommendation_agent
+tests/           conftest.py (also defines requires_llm_configured, shared by every
+                 LLM-calling test file) + test_config, test_models, test_health_api,
+                 test_repositories, test_master_data_service, test_agents_graph,
+                 test_chronos_forecaster, test_inventory_analysis_agent,
+                 test_supply_planning_agent, test_allocation_agent,
+                 test_cost_optimization_agent, test_constraint_validation_agent,
+                 test_decision_review_agent, test_final_recommendation_agent
+streamlit_app.py Streamlit demo dashboard (own venv-ui/, see "Streamlit demo dashboard"
+                 below) - not part of app/, since it's a UI over the workflow, not part
+                 of it
+.github/
+  workflows/     ci.yml — pytest against both reasoning engines (see "CI" below)
 ```
 
 ## Database
@@ -411,3 +419,73 @@ Cost Optimization → Constraint Validation (with a replanning loop back to Supp
 → Decision Review → Final Recommendation, calling Groq four times (Supply Planning,
 Allocation, Decision Review, Final Recommendation) and HuggingFace Chronos once (Demand
 Forecast), with every other step pure deterministic computation against real data.
+
+## Reasoning engine abstraction: Groq vs. local Ollama
+
+Groq's free tier has a 100,000 token/day cap (see the README's rate-limit note), which
+normal test-suite + manual-run usage can exhaust mid-session. Rather than block on that
+external quota, all four LLM-calling agents get their model from one factory,
+`app/core/llm.py`:
+
+- **`get_chat_model()`**: returns `ChatGroq(...)` or `ChatOllama(...)` depending on
+  `Settings.llm_provider` (`"groq"` default, or `"ollama"`), `@lru_cache`'d like the
+  Chronos pipeline. Each agent calls `get_chat_model().with_structured_output(Schema)` —
+  identical structured-output contract either way, since both `langchain-groq` and
+  `langchain-ollama` implement the same `with_structured_output` interface via
+  tool-calling. Switching provider is a one-line `.env` change (`LLM_PROVIDER=ollama`),
+  no code change in any agent.
+- **`get_active_model_name()`**: returns a human-readable model name (e.g.
+  `ollama/mistral` vs `llama-3.3-70b-versatile`) for trace/log messages, so a run's trace
+  never misattributes which engine actually produced a result — this mattered in
+  practice: earlier versions hardcoded `settings.groq_model` in trace strings, which kept
+  saying "via llama-3.3-70b-versatile" even during a live Ollama run.
+- Local Ollama models need tool-calling support (`with_structured_output`'s default
+  method) — check `ollama show <model>` lists `tools` under capabilities before using one
+  here. `mistral` does; some smaller models (e.g. `phi3`) may not.
+- **Tests**: `tests/conftest.py::requires_llm_configured` replaces what used to be five
+  near-identical `requires_groq_key` markers (one per LLM-calling test file, each
+  skipping only on `not settings.groq_api_key`). The shared marker skips only when
+  *neither* engine is configured (`not (groq_api_key or llm_provider == "ollama")`), so
+  the same tests provide real coverage against whichever engine is actually set up —
+  this is what lets CI's Ollama job (below) exercise real assertions instead of every
+  LLM-gated test skipping silently.
+
+## Streamlit demo dashboard
+
+`streamlit_app.py` — a read-only dashboard over `run_planning_workflow` for demoing the
+system to business stakeholders (not a production UI, no auth). Three tabs mirror the
+three things a stakeholder would ask to see: input master data, every intermediate
+agent's output (one section per pipeline stage, in order), and the final recommendation.
+
+**Why a separate venv (`venv-ui/`)**: `fastapi==0.115.6` pins `starlette<0.42`, but
+Streamlit 1.60's own dashboard server code imports `DEFAULT_EXCLUDED_CONTENT_TYPES` from
+`starlette.middleware.gzip`, a symbol only added well after 0.42 (confirmed against
+starlette's actual source across versions) — Streamlit's package metadata under-declares
+its real floor as `>=0.40`, so `pip` alone won't catch this at install time; it only
+surfaces as an `ImportError` at runtime. The two constraints (FastAPI's ceiling, the
+dashboard's real floor) can't both be satisfied in one environment. Since
+`streamlit_app.py` only imports `app.agents.graph` / `app.core.config` / `app.database.*`
+/ `app.schemas.planning` — none of which touch FastAPI (confirmed: only
+`app/api/main.py` and `app/api/routers/health.py` import `fastapi`, and neither is on
+that import path) — the dashboard doesn't need FastAPI installed at all. Its own
+`requirements-ui.txt` lists the actual runtime dependencies directly rather than
+chaining `-r requirements.txt`, letting `pip` resolve a modern starlette freely.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR to `main` (plus manual dispatch) as two
+independent jobs, so both supported reasoning engines get exercised:
+
+- **`test-groq`**: installs `requirements-dev.txt`, runs `pytest` with `GROQ_API_KEY`
+  from a `secrets.GROQ_API_KEY` repository secret. Missing secret → the LLM-gated tests
+  skip (via `requires_llm_configured`); the job still passes.
+- **`test-ollama`**: installs Ollama directly on the `ubuntu-latest` runner
+  (`curl -fsSL https://ollama.com/install.sh | sh`), starts `ollama serve`, polls
+  `/api/tags` until ready, pulls `mistral`, sets `LLM_PROVIDER=ollama`, then runs the
+  identical `pytest` command — no secret needed. This is the same fallback path a
+  developer would use locally during a Groq quota outage, verified to behave the same
+  way in CI as on a local machine.
+
+Both jobs use `actions/setup-python`'s pip cache keyed on `requirements.txt` +
+`requirements-dev.txt` to avoid re-installing `torch`/`transformers`/`chronos-forecasting`
+from scratch on every run.
