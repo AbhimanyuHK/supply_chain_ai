@@ -238,10 +238,17 @@ class PlanningRun(TimestampMixin, Base):
     store_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
     product_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
     demand_history_window_days: Mapped[int] = mapped_column(nullable=False)
-    # SHA-256 of a canonical JSON scope (sorted store/product ids + window + date) -
-    # used for exact-match "has this scope already been run?" lookups instead of
-    # comparing JSON columns directly (unreliable across dialects - see graph.py).
+    # SHA-256 of a canonical JSON scope (sorted store/product ids + window + date +
+    # optimization_objective) - used for exact-match "has this scope already been
+    # run?" lookups instead of comparing JSON columns directly (unreliable across
+    # dialects - see graph.py).
     scope_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # SHA-256 of the actual loaded master-data snapshot (see
+    # app/services/fingerprint.py) - lets a cache lookup tell "same scope, but has
+    # the underlying data actually changed since last time?" apart from "same
+    # scope, same data, safe to reuse the prior result."
+    data_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    optimization_objective: Mapped[str] = mapped_column(String(32), nullable=False, default="minimize_cost")
 
     llm_provider: Mapped[str] = mapped_column(String(32), nullable=False)
     llm_model: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -257,6 +264,10 @@ class PlanningRun(TimestampMixin, Base):
 
     request_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Populated instead of master_data_snapshot when
+    # Settings.persist_full_master_data_snapshot is False (row counts + business
+    # rules only, not the full snapshot - see app/agents/graph.py::_persist_run).
+    master_data_row_counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     master_data_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     demand_forecast: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     inventory_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -270,4 +281,9 @@ class PlanningRun(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_planning_runs_scope_key", "scope_key"),
         Index("ix_planning_runs_created_at", "created_at"),
+        # Hot lookup path on every run_planning_workflow() call (unlike the plain
+        # scope_key index above, which only serves occasional history browsing).
+        Index(
+            "ix_planning_runs_cache_lookup", "scope_key", "data_fingerprint", "llm_provider", "llm_model"
+        ),
     )

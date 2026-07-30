@@ -34,6 +34,7 @@ class PlanningRunSummary(BaseModel):
     store_ids: list[int] | None
     product_ids: list[int] | None
     demand_history_window_days: int
+    optimization_objective: str
     llm_provider: str
     llm_model: str
     status: PlanningRunStatus
@@ -45,9 +46,11 @@ class PlanningRunRead(PlanningRunSummary):
     """Full row, 1:1 with the ORM model."""
 
     scope_key: str
+    data_fingerprint: str | None
     trace: list[str]
     errors: list[str]
     request_payload: dict | None
+    master_data_row_counts: dict | None
     master_data_snapshot: dict | None
     demand_forecast: dict | None
     inventory_analysis: dict | None

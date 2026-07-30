@@ -110,12 +110,33 @@ def _summarize_scenario_cost(
         fully_satisfies_high_priority=(
             scenario.high_priority_shortages_fulfilled == scenario.high_priority_shortages_total
         ),
+        fulfillment_rate=scenario.fulfillment_rate,
     )
 
 
-def _recommend(scenarios: list[ScenarioCostSummary]) -> tuple[str | None, str]:
+def _recommend(
+    scenarios: list[ScenarioCostSummary], objective: str = "minimize_cost"
+) -> tuple[str | None, str]:
+    """Deterministic scenario selection, driven by `PlanningRequest.optimization_objective`.
+
+    'minimize_cost' (default): cheapest scenario among those that fully satisfy
+    every high-priority shortage, falling back to best high-priority coverage
+    then cost if none fully qualify - unchanged from before this field existed.
+
+    'maximize_service_level': highest fulfillment rate, with cost only as a
+    tiebreaker - for when covering more demand matters more than the price tag
+    (e.g. a holiday-rush run vs. normal operations).
+    """
     if not scenarios:
         return None, "No allocation scenarios to evaluate."
+
+    if objective == "maximize_service_level":
+        best = max(scenarios, key=lambda s: (s.fulfillment_rate, -s.total_cost))
+        rationale = (
+            f"'{best.strategy}' has the highest demand fulfillment rate ({best.fulfillment_rate:.0%}) "
+            f"among all scenarios (cost used only as a tiebreaker; total cost {best.total_cost:.2f})."
+        )
+        return best.strategy, rationale
 
     fully_satisfying = [s for s in scenarios if s.fully_satisfies_high_priority]
     pool = fully_satisfying if fully_satisfying else scenarios
@@ -149,7 +170,7 @@ async def optimize_cost_node(state: PlanningState) -> dict:
     business_rules = snapshot.business_rules
 
     scenario_costs = [_summarize_scenario_cost(s, snapshot, business_rules) for s in allocation.scenarios]
-    recommended_strategy, rationale = _recommend(scenario_costs)
+    recommended_strategy, rationale = _recommend(scenario_costs, state["request"].optimization_objective)
 
     result = CostOptimizationResult(
         scenarios=scenario_costs, recommended_strategy=recommended_strategy, recommendation_rationale=rationale

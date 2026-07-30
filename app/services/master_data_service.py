@@ -54,13 +54,30 @@ class MasterDataService:
             if request.product_ids
             else await self.product_repo.list_all()
         )
-        # All terminals are always in scope: any of them could be a supply source
-        # for the requested stores, which the Supply Planning Agent decides later.
-        terminals = await self.terminal_repo.list_all()
 
         store_ids = [s.store_id for s in stores]
-        terminal_ids = [t.terminal_id for t in terminals]
         product_ids = [p.product_id for p in products]
+
+        if request.store_ids:
+            # Any terminal *could* supply a requested store, but only one with a
+            # real distance-matrix route to one of these specific stores ever
+            # will - the Supply Planning Agent already excludes any terminal with
+            # no route to a shortage's store from candidacy (see
+            # app/agents/supply_planning_agent.py). Deriving terminals from the
+            # distance matrix instead of loading every terminal in the system
+            # unconditionally changes performance, not behavior, and matters at
+            # scale (10,000+ terminals would otherwise mean loading inventory/
+            # fleet for every one of them regardless of scope).
+            distance_matrix = await self.distance_matrix_repo.list_by_store_ids(store_ids)
+            terminal_ids = sorted({d.terminal_id for d in distance_matrix})
+            terminals = await self.terminal_repo.list_by_ids(terminal_ids) if terminal_ids else []
+        else:
+            # No store scope to narrow by - every terminal is genuinely in play.
+            terminals = await self.terminal_repo.list_all()
+            terminal_ids = [t.terminal_id for t in terminals]
+            distance_matrix = await self.distance_matrix_repo.list_by_terminal_and_store_ids(
+                terminal_ids=terminal_ids, store_ids=store_ids
+            )
 
         inventory = await self.inventory_repo.list_for_locations_and_products(
             terminal_ids=terminal_ids, store_ids=store_ids, product_ids=product_ids
@@ -72,9 +89,6 @@ class MasterDataService:
         )
 
         fleet = await self.fleet_repo.list_by_terminal_ids(terminal_ids)
-        distance_matrix = await self.distance_matrix_repo.list_by_terminal_and_store_ids(
-            terminal_ids=terminal_ids, store_ids=store_ids
-        )
 
         return MasterDataSnapshot(
             stores=[StoreRead.model_validate(s) for s in stores],

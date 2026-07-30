@@ -80,8 +80,8 @@ def load_scope_options():
     return _run_async(_load())
 
 
-def run_workflow(request: PlanningRequest) -> dict:
-    return _run_async(run_planning_workflow(request))
+def run_workflow(request: PlanningRequest, *, force_rerun: bool = False) -> dict:
+    return _run_async(run_planning_workflow(request, force_rerun=force_rerun))
 
 
 def find_matching_runs(request: PlanningRequest) -> list[PlanningRunRead]:
@@ -118,7 +118,12 @@ def _load_run_into_session(run: PlanningRunRead) -> None:
         st.session_state["result"] = None
         st.session_state["error"] = run.error_message or "This run failed (no error message recorded)."
     else:
-        st.session_state["result"] = run.to_state_dict()
+        state_dict = run.to_state_dict()
+        if run.master_data_row_counts is not None:
+            # Summary-only mode (Settings.persist_full_master_data_snapshot=False) -
+            # render_input_data falls back to this when "master_data" is absent.
+            state_dict["master_data_row_counts"] = run.master_data_row_counts
+        st.session_state["result"] = state_dict
         st.session_state["error"] = None
     st.session_state["result_source"] = ("historical", run.id, run.created_at, run.llm_provider, run.llm_model)
 
@@ -128,6 +133,16 @@ def _df(models: list) -> pd.DataFrame:
 
 
 def render_input_data(result: dict) -> None:
+    if "master_data" not in result:
+        # Settings.persist_full_master_data_snapshot was False for this historical
+        # run - only row counts + business rules were kept, not the full snapshot
+        # (see app/agents/graph.py::_persist_run). Live runs always have this key.
+        row_counts = result.get("master_data_row_counts")
+        st.info("Full input data snapshot was not persisted for this run (large-scale mode).")
+        if row_counts:
+            st.json(row_counts)
+        return
+
     snapshot = result["master_data"]
     st.subheader("Master data snapshot")
     c1, c2, c3, c4 = st.columns(4)
@@ -341,6 +356,16 @@ def main() -> None:
     selected_stores = st.sidebar.multiselect("Stores (empty = all)", list(store_labels.keys()))
     selected_products = st.sidebar.multiselect("Products (empty = all)", list(product_labels.keys()))
     window_days = st.sidebar.number_input("Demand history window (days)", min_value=1, value=90)
+    objective_label = st.sidebar.selectbox(
+        "Optimization objective",
+        ["Minimize cost", "Maximize service level"],
+        help=(
+            "Minimize cost: cheapest scenario that still fully covers every high-priority "
+            "shortage. Maximize service level: highest demand fulfillment rate, cost only "
+            "as a tiebreaker."
+        ),
+    )
+    objective = "minimize_cost" if objective_label == "Minimize cost" else "maximize_service_level"
 
     st.sidebar.caption(f"{len(store_options)} stores, {len(product_options)} products, {terminal_count} terminals available.")
 
@@ -348,6 +373,7 @@ def main() -> None:
         store_ids=[store_labels[label] for label in selected_stores] or None,
         product_ids=[product_labels[label] for label in selected_products] or None,
         demand_history_window_days=int(window_days),
+        optimization_objective=objective,
     )
 
     # Traceability: surface any prior run for this exact scope (any engine) so the
@@ -391,12 +417,22 @@ def main() -> None:
         else:
             st.caption("No runs yet.")
 
+    force_rerun = st.sidebar.checkbox(
+        "🔁 Force re-run (ignore cached result)",
+        help=(
+            "By default, running the same scope against unchanged data with the same "
+            "reasoning engine reuses the prior result instead of recomputing - no new "
+            "LLM calls, guaranteed identical output. Check this to bypass that and "
+            "compute fresh anyway."
+        ),
+    )
+
     if st.sidebar.button("▶ Run planning workflow", type="primary"):
         with st.spinner(
             "Running the 9-node planning pipeline... this can take a few minutes with a local Ollama model."
         ):
             try:
-                st.session_state["result"] = run_workflow(current_request)
+                st.session_state["result"] = run_workflow(current_request, force_rerun=force_rerun)
                 st.session_state["error"] = None
                 st.session_state["result_source"] = (
                     "live",

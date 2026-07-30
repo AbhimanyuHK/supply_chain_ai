@@ -37,6 +37,26 @@ requires_llm_configured = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_llm_client_caches_between_tests():
+    """Tears down every cached LLM client after each test.
+
+    `pytest-asyncio` gives each test function its own event loop by default
+    (only *fixtures* honor `asyncio_default_fixture_loop_scope = "session"`
+    above). `get_chat_model()`/each agent's `_get_structured_llm()` are
+    `@lru_cache`'d process-wide, so a client built during one test's loop can
+    leak into the next test's *different* loop and raise "Event loop is
+    closed" the moment it tries to make a real call - the exact same failure
+    mode already fixed for the Streamlit dashboard (see
+    `app/core/llm.py::reset_llm_client_caches`), just triggered here by two
+    real-LLM tests running back to back instead of two Streamlit reruns.
+    """
+    yield
+    from app.core.llm import reset_llm_client_caches
+
+    reset_llm_client_caches()
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _prepare_test_database():
     if TEST_DB_PATH.exists():

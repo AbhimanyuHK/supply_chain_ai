@@ -512,10 +512,147 @@ rendered once (CLI script or Streamlit) and thrown away.
   `streamlit_app.py`'s render functions work unchanged on a historical run - they don't
   know or care whether the data came from a live run or the database.
 - **Streamlit UI**: picking a scope with existing history shows those runs in the
-  sidebar (any engine); selecting one is a pure read (no LLM call). "Run" always forces
-  a fresh computation regardless. A "Run history (all scopes)" expander browses beyond
-  the current selection. A caption always states whether the results on screen are live
-  or a specific historical run.
+  sidebar (any engine); selecting one is a pure read (no LLM call, no new `PlanningRun`
+  row - see "Idempotency and caching" below for why "Run" itself no longer always
+  recomputes either). A "Run history (all scopes)" expander browses beyond the current
+  selection. A caption always states whether the results on screen are live or a
+  specific historical run.
+
+## Idempotency and caching
+
+`run_planning_workflow` is idempotent by default, not just persisted: the same scope run
+against unchanged data with the same reasoning engine always returns the identical prior
+result rather than recomputing - a business requirement (traceability implies
+reproducibility - a re-run of "the same thing" shouldn't produce a different answer just
+because an LLM sampled differently), and a practical one (no wasted LLM calls/quota on a
+redundant repeat).
+
+- **Data fingerprint, not just scope**: `app/services/fingerprint.py::compute_data_fingerprint`
+  hashes the actual loaded `MasterDataSnapshot` (SHA-256, excluding `loaded_at` - the only
+  non-deterministic field anywhere in the snapshot), with every nested list sorted by its
+  natural identity key first (`stores`/`terminals`/`products` by id, `inventory` by
+  `(location_type, location_id, product_id)`, `demand_history` by
+  `(store_id, product_id, date)`, `fleet` by `vehicle_id`, `distance_matrix` by
+  `(terminal_id, store_id)`). Sorting matters: `json.dumps(..., sort_keys=True)` only
+  sorts dict keys, never list order, and no repository applies `ORDER BY` anywhere -
+  without normalizing order first, the cache would spuriously miss even when nothing
+  about the data actually changed (this was caught, and fixed, before it shipped: Fix 1
+  below changes how terminals are ordered when a store scope is set, which would
+  otherwise have made the naive fingerprint unstable the moment that change landed).
+  Fingerprinting the *data*, not just the request parameters, also means a scope where
+  inventory has genuinely changed since the last run correctly triggers a fresh
+  computation rather than silently serving a stale plan.
+- **Cache lookup**: `run_planning_workflow` loads master data once standalone (via the
+  now-memoizing `load_master_data_node` - see its docstring), computes the fingerprint,
+  and - unless `force_rerun=True` - calls
+  `PlanningRunRepository.find_success_by_scope_data_and_engine(scope_key,
+  data_fingerprint, llm_provider, llm_model)` (filters `status == SUCCESS` explicitly,
+  unlike `find_by_scope_key`, which is for history browsing and shows failures too). A
+  hit returns `PlanningRunRead.model_validate(row).to_state_dict()` immediately - no new
+  LLM calls, no new row written (nothing was computed, the existing row remains the
+  record). A miss proceeds through the graph as before, seeding the already-loaded
+  snapshot into the initial state so `load_master_data_node` doesn't load it a second
+  time inside the graph. Both the standalone preload and the cache lookup are wrapped in
+  their own try/except (never block or crash a real run on a DB hiccup - same philosophy
+  as `_persist_run`).
+- **`PlanningRequest.optimization_objective` is part of the cache key** (folded into
+  `scope_key()`) - a different objective is a genuinely different desired plan, not a
+  cache-equivalent request.
+- **Streamlit**: the "▶ Run planning workflow" button now benefits from this cache by
+  default too (no code change needed there - it's the same `run_planning_workflow` every
+  caller goes through); a "🔁 Force re-run" checkbox passes `force_rerun=True` to bypass
+  it when a genuinely fresh computation is wanted regardless (e.g. suspecting a stale
+  hit, or just wanting to compare timing).
+- **Defense in depth, not the primary guarantee**: `groq_temperature`/
+  `gemini_temperature`/`ollama_temperature` all default to `0.0` (down from `0.1`) to
+  minimize LLM sampling randomness on genuinely fresh computations. The cache above is
+  what actually guarantees "same input → same output," not this.
+- **Known limitation, not solved here**: the fingerprint captures data determinism, not
+  code/prompt/settings version - a stale hit could still serve a plan computed under
+  different application logic if the app was redeployed between two calls.
+
+## Scalability at target scale
+
+The original spec's target scale (1,000+ stores, 10,000+ terminals, millions of
+inventory rows) surfaced six real bottlenecks once actually analyzed against the code
+(not just theoretically) - fixed together, since several share the same root cause:
+
+1. **Master data over-fetched every terminal regardless of scope**
+   (`app/services/master_data_service.py`) - `terminal_repo.list_all()` ran
+   unconditionally, then loaded inventory/fleet/distance-matrix for *every* terminal
+   even for a 5-store scope. Fixed by querying `distance_matrix` scoped by the request's
+   store ids *first* (`DistanceMatrixRepository.list_by_store_ids`), deriving the
+   actually-relevant `terminal_ids` from that, then loading terminals/fleet/inventory
+   from the narrowed set. Behavior-preserving, not just faster: Supply Planning already
+   excludes any terminal with no `distance_matrix` route to a shortage's store from
+   candidacy, so a terminal unreachable from every scoped store was never usable anyway.
+   Only kicks in when `store_ids` is actually scoped - unscoped ("all stores") keeps the
+   old `list_all()` path, correctly, since there's no scope to narrow by.
+2. **Unbounded SQL `IN (...)` clauses - a real bug, not just slow.** Every repository
+   binding `.in_(some_id_list)` (`base.py::_list_by_column_in` and the custom queries in
+   `inventory_repository.py`, `distance_matrix_repository.py`,
+   `demand_history_repository.py`) had no batching. SQLite's default ~999-bound-parameter
+   limit per statement means 10,000 ids would outright fail, not just run slowly. Fixed
+   with a `chunked(seq, size)` generator in `base.py`: single-`.in_()` call sites chunk
+   at 500; multi-`.in_()` call sites (2-3 lists bound in one statement) use a smaller
+   per-dimension chunk (300-450) so the combined parameter count stays under budget, with
+   terminal/store rows queried in separate statements per location type rather than OR'd
+   together, so chunking independently can't produce duplicate rows.
+3. **In-memory O(shortages × inventory) scan** in Supply Planning - fixed by pre-grouping
+   `snapshot.inventory` into a `dict[product_id, list[InventoryRead]]` once per run
+   instead of re-scanning the full list per shortage (`supply_planning_agent.py`).
+4. **Sequential per-shortage LLM calls - the biggest single change.**
+   `plan_supply_node` called the LLM once per shortage, sequentially. At scale
+   (thousands of shortages) that's thousands of sequential round-trips per run, and
+   would instantly exceed a tight per-minute cap (Gemini's confirmed real limit is 5
+   requests/minute for Flash models - it choked on a *single* shortage's 3 calls
+   earlier this session). Fixed by batching multiple shortages into one LLM
+   prompt/response (`Settings.supply_planning_batch_size`, default 25) - new
+   `_LLMShortagePlan`/`_LLMBatchPlanningResponse` schemas, one prompt per batch with
+   each shortage keeping its own block (including its own retry-violation note),
+   matched back by `(store_id, product_id)`. Batches run with bounded concurrency
+   (`asyncio.Semaphore(settings.llm_max_concurrent_requests)`, default 3 - not 1, since
+   Groq the default provider has generous limits; Gemini-free-tier operators should
+   override to 1 via `.env`). **Documented gap, not solved**: a semaphore bounds
+   simultaneity, not requests-per-minute - many batches at concurrency=1 can still fire
+   sequentially within one minute and exceed a tight RPM cap. True RPM pacing is a
+   reasonable follow-up, out of scope since Groq doesn't need it.
+5. **`PlanningRun.master_data_snapshot` size at scale** - see "Planning-run persistence"
+   above; `Settings.persist_full_master_data_snapshot` (default `True`) toggles storing
+   the full snapshot vs. just row counts + business rules (`master_data_row_counts`).
+6. **No task queue for concurrent runs** - confirmed via `app/api/routers/` that no
+   `/optimize`-style endpoint exists yet, so this isn't a currently-exposed problem (the
+   only callers of `run_planning_workflow` today are the single-process/single-user
+   Streamlit dashboard and tests). Also, this project has an explicit prior decision not
+   to add Redis speculatively, and a real task queue typically needs a broker.
+   **Decision: documented, not built.** When the REST endpoint is eventually built, use
+   FastAPI `BackgroundTasks` to kick off the run and return `202` immediately with the
+   run's id, with the client polling `GET /planning-runs/{id}` (`PlanningRunRepository.
+   get_by_id` already exists) for status - zero new infrastructure, since `PlanningRun`
+   already tracks status transitions. Running multiple ASGI worker processes (an ops
+   decision, not new code) gives real process-level concurrency on top of that. A real
+   queue (`arq` + a lightweight broker) is the right call only once *that's* not enough.
+
+## Cost objective toggle
+
+`PlanningRequest.optimization_objective` (`"minimize_cost"` default, or
+`"maximize_service_level"`) - a per-run choice, not a global policy in
+`config/business_rules.yaml`: `get_business_rules()` is process-wide `@lru_cache`'d, so a
+global toggle would leak across concurrent runs once the deferred `/optimize` endpoint
+exists, and different runs may legitimately want different trade-offs (e.g. holiday rush
+vs. normal operations).
+
+- `app/agents/cost_optimization_agent.py::_recommend` branches on it: `minimize_cost`
+  keeps the original rule (cheapest scenario among those fully satisfying every
+  high-priority shortage); `maximize_service_level` picks highest `fulfillment_rate`
+  (now copied onto `ScenarioCostSummary` from the source `AllocationScenario`), cost only
+  as a tiebreaker.
+- `decision_review_agent.py::_build_prompt` rewords its stated weighing-order sentence to
+  match (cost moves earlier in the priority order for `minimize_cost`).
+- `final_recommendation_agent.py::_build_prompt` names which objective drove the
+  selection, for narrative consistency in the synthesized business explanation.
+- Folded into `scope_key()` (see "Idempotency and caching" above) - a different
+  objective is a genuinely different desired plan, correctly treated as a cache miss.
 
 ## CI
 

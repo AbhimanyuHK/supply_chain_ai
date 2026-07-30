@@ -89,7 +89,7 @@ def _total_distance_km(lines: list[AllocationLine], distance_by_pair: dict[tuple
     return sum(distance_by_pair.get((line.terminal_id, line.store_id), 0.0) for line in lines)
 
 
-def _build_prompt(metrics_by_strategy: dict[str, dict]) -> str:
+def _build_prompt(metrics_by_strategy: dict[str, dict], objective: str = "minimize_cost") -> str:
     lines = "\n".join(
         f"- {strategy}: inventory_balance={m['inventory_balance_score']:.2f} (0-1, higher=better), "
         f"total_distance={m['total_transportation_distance_km']:.1f}km, "
@@ -99,14 +99,25 @@ def _build_prompt(metrics_by_strategy: dict[str, dict]) -> str:
         f"high_priority_covered={m['high_priority_shortages_fulfilled']}/{m['high_priority_shortages_total']}"
         for strategy, m in metrics_by_strategy.items()
     )
+    if objective == "maximize_service_level":
+        weighing = (
+            "fully covering high-priority stores, overall demand fulfillment, minimizing "
+            "future inventory risk, balanced inventory draw-down across locations, then "
+            "cost and distance as tie-breakers - the business objective for this run is "
+            "maximizing service level, so fulfillment matters more than cost here."
+        )
+    else:
+        weighing = (
+            "fully covering high-priority stores, minimizing total cost, overall demand "
+            "fulfillment, minimizing future inventory risk, then balanced inventory "
+            "draw-down and distance as tie-breakers - the business objective for this run "
+            "is minimizing cost, so weigh it earlier than usual."
+        )
     return (
         "Compare these already constraint-validated shipment plan scenarios holistically:\n"
         f"{lines}\n\n"
-        "Score each 0-100 reflecting overall quality, weighing (in this order of "
-        "importance): fully covering high-priority stores, overall demand fulfillment, "
-        "minimizing future inventory risk, balanced inventory draw-down across locations, "
-        "then cost and distance as tie-breakers. Give a short one-sentence rationale per "
-        "scenario."
+        f"Score each 0-100 reflecting overall quality, weighing (in this order of "
+        f"importance): {weighing} Give a short one-sentence rationale per scenario."
     )
 
 
@@ -160,7 +171,8 @@ async def review_decision_node(state: PlanningState) -> dict:
         }
 
     structured_llm = _get_structured_llm()
-    response: _LLMReviewResponse = await structured_llm.ainvoke(_build_prompt(metrics_by_strategy))
+    objective = state["request"].optimization_objective
+    response: _LLMReviewResponse = await structured_llm.ainvoke(_build_prompt(metrics_by_strategy, objective))
     score_by_strategy = {s.strategy: s for s in response.scores}
 
     evaluations = [

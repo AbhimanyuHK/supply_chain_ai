@@ -6,6 +6,7 @@ downstream agent to share.
 import datetime
 import hashlib
 import json
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,6 +33,17 @@ class PlanningRequest(BaseModel):
     demand_history_window_days: int = Field(
         default=90, ge=1, description="How many days of trailing demand history to load."
     )
+    optimization_objective: Literal["minimize_cost", "maximize_service_level"] = Field(
+        default="minimize_cost",
+        description=(
+            "Which goal drives scenario selection in Cost Optimization/Decision Review: "
+            "'minimize_cost' (default - cheapest scenario that still fully covers every "
+            "high-priority shortage) or 'maximize_service_level' (highest fulfillment "
+            "rate, cost as a tiebreaker). A per-run choice, not a global policy - "
+            "different runs may legitimately want different trade-offs (e.g. holiday "
+            "rush vs. normal operations)."
+        ),
+    )
 
     def scope_key(self) -> str:
         """Deterministic fingerprint of this request's scope, for exact-match
@@ -41,6 +53,8 @@ class PlanningRequest(BaseModel):
         same way regardless of selection order. `planning_date` is included -
         the Demand Forecast Agent's horizon depends on it, so a run from a
         different calendar day genuinely isn't "the same scope" for reuse.
+        `optimization_objective` is included too - a different objective is a
+        genuinely different desired plan, not a cache-equivalent request.
         """
         canonical = json.dumps(
             {
@@ -48,6 +62,7 @@ class PlanningRequest(BaseModel):
                 "product_ids": sorted(self.product_ids) if self.product_ids else None,
                 "demand_history_window_days": self.demand_history_window_days,
                 "planning_date": self.planning_date.isoformat(),
+                "optimization_objective": self.optimization_objective,
             },
             sort_keys=True,
             separators=(",", ":"),

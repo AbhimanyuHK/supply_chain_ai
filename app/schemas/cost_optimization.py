@@ -31,6 +31,10 @@ class ScenarioCostSummary(BaseModel):
     high_priority_shortages_fulfilled: int
     high_priority_shortages_total: int
     fully_satisfies_high_priority: bool
+    # Copied from the source AllocationScenario - lets _recommend() select by
+    # fulfillment when optimization_objective="maximize_service_level" without
+    # threading a second list through it.
+    fulfillment_rate: float
 
 
 class CostOptimizationResult(BaseModel):

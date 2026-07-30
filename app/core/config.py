@@ -58,7 +58,14 @@ class Settings(BaseSettings):
         default="llama-3.3-70b-versatile",
         description="Groq-hosted LLM used as the reasoning engine for all agents.",
     )
-    groq_temperature: float = 0.1
+    groq_temperature: float = Field(
+        default=0.0,
+        description=(
+            "0.0 minimizes LLM sampling randomness so identical inputs produce stable "
+            "outputs - a defense-in-depth measure for idempotency; the primary guarantee "
+            "is the scope+data+engine cache in app/agents/graph.py, not this."
+        ),
+    )
     groq_max_retries: int = 3
 
     gemini_api_key: str = Field(
@@ -68,7 +75,7 @@ class Settings(BaseSettings):
         default="gemini-2.5-flash",
         description="Gemini model used as the reasoning engine for all agents when llm_provider='gemini'.",
     )
-    gemini_temperature: float = 0.1
+    gemini_temperature: float = 0.0
 
     ollama_model: str = Field(
         default="mistral",
@@ -80,7 +87,7 @@ class Settings(BaseSettings):
         ),
     )
     ollama_base_url: str = Field(default="http://localhost:11434", description="Local Ollama server URL.")
-    ollama_temperature: float = 0.1
+    ollama_temperature: float = 0.0
 
     fleet_module_enabled: bool = Field(
         default=False,
@@ -110,6 +117,29 @@ class Settings(BaseSettings):
             "the Supply Planning Agent prompts Groq — bounds prompt size/cost at scale."
         ),
     )
+    supply_planning_batch_size: int = Field(
+        default=25,
+        ge=1,
+        description=(
+            "Shortages grouped into one LLM prompt/response per batch, instead of one call "
+            "per shortage. At scale (thousands of shortages) one-call-per-shortage means "
+            "thousands of sequential LLM round-trips per run - easily exceeding a tight "
+            "per-minute cap (e.g. Gemini free tier's 5 requests/minute). Batching reduces "
+            "total request count, which per-minute caps actually care about."
+        ),
+    )
+    llm_max_concurrent_requests: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Max concurrent LLM calls in flight at once (bounds simultaneity, not "
+            "requests-per-minute - a semaphore doesn't pace calls across a rolling minute "
+            "window). Default of 3 suits Groq (the default provider, generous limits). "
+            "Gemini free-tier operators should override to 1 via .env - its real limit is "
+            "5 requests/minute, and many batches at concurrency=1 can still exceed that "
+            "within one minute; true RPM pacing is a documented follow-up, not built here."
+        ),
+    )
 
     max_replanning_attempts: int = Field(
         default=2,
@@ -128,6 +158,18 @@ class Settings(BaseSettings):
             "A (terminal, product) drawn down below this fraction of its pre-shipment "
             "available stock counts toward the Decision Review Agent's future inventory "
             "risk metric."
+        ),
+    )
+
+    persist_full_master_data_snapshot: bool = Field(
+        default=True,
+        description=(
+            "When True (default, fine at demo/moderate scale), PlanningRun persists the "
+            "full input master-data snapshot verbatim. At millions of inventory rows this "
+            "JSON blob could be many MB per run - set False to persist only row counts + "
+            "business rules (PlanningRun.master_data_row_counts) instead. Master data is "
+            "re-derivable from the DB either way; only the LLM-driven stage outputs are "
+            "genuinely irreplaceable per run."
         ),
     )
 

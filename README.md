@@ -224,31 +224,30 @@ venv-ui\Scripts\streamlit.exe run streamlit_app.py
 ```
 
 Open the URL it prints (default `http://localhost:8501`), pick a scope (or leave it
-empty for "all stores/products") in the sidebar, and click **Run planning workflow**.
-Three tabs show the results: **Input Data** (master data snapshot), **Intermediate
-Data** (forecast → shortages → candidate plans → allocation scenarios → cost breakdown →
-constraint validation, one section per pipeline stage), and **Final Plan** (decision
-review scores, the selected recommendation, shipment plan, expected inventory, and
-alternatives). A workflow failure (e.g. Groq quota exhausted) is caught and shown as an
-error banner rather than crashing the app — switch `LLM_PROVIDER=ollama` in `.env` and
-rerun if that happens.
+empty for "all stores/products") and an **optimization objective** (minimize cost, or
+maximize service level) in the sidebar, and click **Run planning workflow**. Three tabs
+show the results: **Input Data** (master data snapshot), **Intermediate Data** (forecast
+→ shortages → candidate plans → allocation scenarios → cost breakdown → constraint
+validation, one section per pipeline stage), and **Final Plan** (decision review scores,
+the selected recommendation, shipment plan, expected inventory, and alternatives). A
+workflow failure (e.g. Groq quota exhausted) is caught and shown as an error banner
+rather than crashing the app — switch `LLM_PROVIDER=ollama` in `.env` and rerun if that
+happens.
 
 ### 8a. Run history and traceability
 
 Every call to `run_planning_workflow` — from this dashboard, the CLI script, or a test —
-is persisted as a `planning_runs` row: the full input scope, which reasoning engine/model
-produced it, a success/failure status (with the error message on failure), and every
-intermediate stage's real output. This is unconditional and automatic, not something you
-opt into — it exists so an AI-generated plan can always be traced back to exactly what
-produced it (which is standard practice for auditable AI-decision systems, not unique to
-this project).
+is persisted as a `planning_runs` row: the full input scope (including which
+optimization objective was used), which reasoning engine/model produced it, a
+success/failure status (with the error message on failure), and every intermediate
+stage's real output. This is unconditional and automatic, not something you opt into —
+it exists so an AI-generated plan can always be traced back to exactly what produced it
+(standard practice for auditable AI-decision systems, not unique to this project).
 
 The dashboard surfaces this two ways:
-- **Pick a scope that's already been run** (same stores/products/window/date, any
-  engine) and a "N previous run(s) for this exact scope" panel appears in the sidebar —
-  select one to view its 3 tabs instantly, with **no LLM call made**. "▶ Run planning
-  workflow" still always forces a fresh computation, e.g. to compare a different engine
-  against the same scope.
+- **Pick a scope that's already been run** (same stores/products/window/date/objective,
+  any engine) and a "N previous run(s) for this exact scope" panel appears in the
+  sidebar — select one to view its 3 tabs instantly, with **no LLM call made**.
 - **🕘 Run history (all scopes)** in the sidebar browses the last 20 runs regardless of
   scope.
 
@@ -256,6 +255,21 @@ A caption at the top of the results area always says whether you're looking at a
 run or a specific historical one (with its timestamp and model). Selecting a *failed*
 historical run shows its error message the same way a live failure would — there's no
 stage data to render for a run that didn't complete.
+
+### 8b. Idempotency: "Run" reuses results by default
+
+Clicking **▶ Run planning workflow** doesn't always recompute — if the exact same scope
+(stores/products/window/date/objective) has already succeeded against the *same
+underlying data* with the *same reasoning engine*, it instantly returns that prior
+result instead: no new LLM calls, no wasted quota, and the guarantee that re-running
+"the same thing" never produces a different answer just because an LLM sampled
+differently. This is checked by fingerprinting the actual loaded data (not just the
+request), so if inventory has genuinely changed since the last run, a fresh computation
+happens correctly rather than serving a stale plan.
+
+Check **🔁 Force re-run (ignore cached result)** to bypass this and compute fresh
+regardless — e.g. if you suspect a stale hit, or just want to compare timing/output
+against a fresh call.
 
 Note: `Settings` is cached per-process, so switching `LLM_PROVIDER` in `.env` requires
 restarting the Streamlit process — an already-running dashboard won't pick up the change

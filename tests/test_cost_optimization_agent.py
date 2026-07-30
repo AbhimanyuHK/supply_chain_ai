@@ -2,14 +2,14 @@ import datetime
 
 import pytest
 
-from app.agents.cost_optimization_agent import _pick_vehicle, optimize_cost_node
+from app.agents.cost_optimization_agent import _pick_vehicle, _recommend, optimize_cost_node
 from app.core.business_rules import BusinessRules
 from app.models.entities import VehicleStatus
 from app.schemas.allocation import AllocationLine, AllocationResult, AllocationScenario
-from app.schemas.cost_optimization import CostOptimizationResult
+from app.schemas.cost_optimization import CostOptimizationResult, ScenarioCostSummary
 from app.schemas.distance import DistanceMatrixRead
 from app.schemas.fleet import FleetRead
-from app.schemas.planning import MasterDataSnapshot
+from app.schemas.planning import MasterDataSnapshot, PlanningRequest
 from app.schemas.product import ProductRead
 from app.schemas.store import StoreRead
 from app.schemas.terminal import TerminalRead
@@ -123,6 +123,7 @@ async def test_optimize_cost_node_recomputes_real_cost_ignoring_allocation_estim
     scenario = _scenario("priority_first", quantity=10)
 
     state = {
+        "request": PlanningRequest(),
         "master_data": snapshot,
         "allocation": AllocationResult(scenarios=[scenario], recommended_strategy="priority_first"),
     }
@@ -161,6 +162,7 @@ async def test_optimize_cost_node_applies_delay_penalty_for_slow_delivery():
     scenario = _scenario("priority_first", quantity=1)
 
     state = {
+        "request": PlanningRequest(),
         "master_data": snapshot,
         "allocation": AllocationResult(scenarios=[scenario], recommended_strategy="priority_first"),
     }
@@ -181,6 +183,7 @@ async def test_optimize_cost_node_flags_capacity_exceeded_and_falls_back_to_prox
     scenario = _scenario("priority_first", quantity=1000)  # weight = 1000*2.0 = 2000, way over capacity
 
     state = {
+        "request": PlanningRequest(),
         "master_data": snapshot,
         "allocation": AllocationResult(scenarios=[scenario], recommended_strategy="priority_first"),
     }
@@ -203,6 +206,7 @@ async def test_optimize_cost_node_recommends_lowest_cost_among_fully_satisfying_
     expensive_but_complete = _scenario("priority_first", quantity=50, high_priority_fulfilled=1, high_priority_total=1)
 
     state = {
+        "request": PlanningRequest(),
         "master_data": snapshot,
         "allocation": AllocationResult(
             scenarios=[cheap_but_incomplete, expensive_but_complete], recommended_strategy="score_first"
@@ -228,3 +232,56 @@ async def test_optimize_cost_node_skips_when_no_allocation_scenarios():
     assert result.scenarios == []
     assert result.recommended_strategy is None
     assert "No allocation scenarios" in update["trace"][0]
+
+
+def _bare_cost_summary(strategy: str, total_cost: float, fulfillment_rate: float) -> ScenarioCostSummary:
+    """A ScenarioCostSummary with no lines - just for exercising `_recommend`'s
+    selection logic directly, independent of the full cost-computation pipeline."""
+    return ScenarioCostSummary(
+        strategy=strategy,
+        lines=[],
+        total_transportation_cost=total_cost,
+        total_handling_cost=0.0,
+        total_holding_cost=0.0,
+        total_delay_penalty=0.0,
+        total_cost=total_cost,
+        high_priority_shortages_fulfilled=1,
+        high_priority_shortages_total=1,
+        fully_satisfies_high_priority=True,
+        fulfillment_rate=fulfillment_rate,
+    )
+
+
+def test_recommend_minimize_cost_picks_cheapest_when_both_fully_satisfy_high_priority():
+    cheap_lower_fulfillment = _bare_cost_summary("cheap", total_cost=100.0, fulfillment_rate=0.7)
+    expensive_higher_fulfillment = _bare_cost_summary("expensive", total_cost=500.0, fulfillment_rate=1.0)
+
+    strategy, rationale = _recommend(
+        [cheap_lower_fulfillment, expensive_higher_fulfillment], objective="minimize_cost"
+    )
+
+    assert strategy == "cheap"
+    assert "lowest total cost" in rationale
+
+
+def test_recommend_maximize_service_level_picks_highest_fulfillment_regardless_of_cost():
+    cheap_lower_fulfillment = _bare_cost_summary("cheap", total_cost=100.0, fulfillment_rate=0.7)
+    expensive_higher_fulfillment = _bare_cost_summary("expensive", total_cost=500.0, fulfillment_rate=1.0)
+
+    strategy, rationale = _recommend(
+        [cheap_lower_fulfillment, expensive_higher_fulfillment], objective="maximize_service_level"
+    )
+
+    assert strategy == "expensive"
+    assert "fulfillment" in rationale.lower()
+
+
+def test_recommend_maximize_service_level_uses_cost_as_tiebreaker():
+    tied_fulfillment_cheap = _bare_cost_summary("cheap", total_cost=100.0, fulfillment_rate=0.9)
+    tied_fulfillment_expensive = _bare_cost_summary("expensive", total_cost=500.0, fulfillment_rate=0.9)
+
+    strategy, _ = _recommend(
+        [tied_fulfillment_cheap, tied_fulfillment_expensive], objective="maximize_service_level"
+    )
+
+    assert strategy == "cheap"

@@ -160,10 +160,18 @@ def _build_prompt(
     fell_back: bool,
     unresolved_violation_count: int,
     unresolved_shortage_count: int,
+    objective: str = "minimize_cost",
 ) -> str:
+    objective_note = (
+        "This run's business objective was to maximize service level (fulfillment), "
+        "with cost as a secondary concern."
+        if objective == "maximize_service_level"
+        else "This run's business objective was to minimize cost, subject to fully "
+        "covering high-priority stores."
+    )
     return (
         f"A supply chain shipment plan ('{strategy}' strategy) has been selected with these "
-        f"real, already-computed metrics:\n"
+        f"real, already-computed metrics ({objective_note}):\n"
         f"- Overall review score: {evaluation.overall_score:.0f}/100\n"
         f"- Demand fulfillment rate: {evaluation.demand_fulfillment_rate:.0%}\n"
         f"- High-priority stores covered: {evaluation.high_priority_shortages_fulfilled}/"
@@ -233,6 +241,7 @@ async def recommend_final_node(state: PlanningState) -> dict:
             decision_review.fell_back_to_invalid_scenario,
             unresolved_violation_count,
             unresolved_shortage_count,
+            state["request"].optimization_objective,
         )
     )
 

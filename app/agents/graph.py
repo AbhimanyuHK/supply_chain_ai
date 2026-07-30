@@ -18,6 +18,20 @@ reasoning engine produced it, the full input scope, every intermediate
 stage's output, and a success/failure status. This is unconditional and
 transparent to callers: the return value is unchanged, and a persistence
 failure never masks the real result or exception.
+
+`run_planning_workflow` is also idempotent by default: it loads master data
+once up front, fingerprints it (`app/services/fingerprint.py`), and - unless
+`force_rerun=True` - looks for an existing successful `PlanningRun` for the
+exact same scope + data + reasoning engine before doing any real work. A hit
+returns that prior result immediately, with zero new LLM calls and no new
+row written (nothing was computed). This is a business requirement, not
+just an optimization: the same scope run against unchanged data with the
+same engine should always produce the same plan, never a different one due
+to LLM sampling randomness or simply because someone clicked "Run" twice.
+Known limitation, not solved here: the fingerprint captures data
+determinism, not code/prompt/settings version - a stale hit could still
+serve a plan computed under different application logic if the app was
+redeployed between two calls.
 """
 
 from langgraph.graph import END, START, StateGraph
@@ -40,6 +54,8 @@ from app.database.repositories import PlanningRunRepository
 from app.database.session import AsyncSessionLocal
 from app.models.entities import PlanningRunStatus
 from app.schemas.planning import PlanningRequest
+from app.schemas.planning_run import PlanningRunRead
+from app.services.fingerprint import compute_data_fingerprint
 
 
 def build_graph() -> CompiledStateGraph:
@@ -85,14 +101,23 @@ _STAGE_KEYS = (
 
 
 async def _persist_run(
-    request: PlanningRequest, *, state: PlanningState | None, error: Exception | None
+    request: PlanningRequest,
+    *,
+    state: PlanningState | None,
+    error: Exception | None,
+    data_fingerprint: str | None,
 ) -> None:
     """Writes one `PlanningRun` audit row for this invocation.
 
     On success, every stage's real output is stored (`state[key].model_dump(mode="json")`
-    per stage). On failure, only scope/provider/error are stored - `graph.ainvoke()`
-    has no checkpointer configured, so a mid-run exception propagates with no
-    partial state to persist (see `PlanningRun`'s docstring).
+    per stage) - except `master_data`, which is stored in full only if
+    `Settings.persist_full_master_data_snapshot` is True (the default); when False
+    (opt-in at real scale, where the full snapshot could be many MB), only row
+    counts + business rules are stored instead (`master_data_row_counts`),
+    leaving `master_data_snapshot` NULL. On failure, only scope/provider/error
+    are stored - `graph.ainvoke()` has no checkpointer configured, so a mid-run
+    exception propagates with no partial state to persist (see `PlanningRun`'s
+    docstring).
 
     Never raises: a DB write hiccup must not crash or mask the actual planning
     result/exception, so any failure here is only logged.
@@ -105,6 +130,8 @@ async def _persist_run(
             "product_ids": sorted(request.product_ids) if request.product_ids else None,
             "demand_history_window_days": request.demand_history_window_days,
             "scope_key": request.scope_key(),
+            "data_fingerprint": data_fingerprint,
+            "optimization_objective": request.optimization_objective,
             "llm_provider": settings.llm_provider,
             "llm_model": get_active_model_name(),
             "request_payload": request.model_dump(mode="json"),
@@ -121,9 +148,22 @@ async def _persist_run(
             fields["replanning_attempts"] = state.get("replanning_attempts", 0)
             for key in _STAGE_KEYS:
                 value = state.get(key)
-                if value is not None:
-                    column = "master_data_snapshot" if key == "master_data" else key
-                    fields[column] = value.model_dump(mode="json")
+                if value is None:
+                    continue
+                if key == "master_data" and not settings.persist_full_master_data_snapshot:
+                    fields["master_data_row_counts"] = {
+                        "stores": len(value.stores),
+                        "terminals": len(value.terminals),
+                        "products": len(value.products),
+                        "inventory": len(value.inventory),
+                        "demand_history": len(value.demand_history),
+                        "fleet": len(value.fleet),
+                        "distance_matrix": len(value.distance_matrix),
+                        "business_rules": value.business_rules.model_dump(mode="json"),
+                    }
+                    continue  # master_data_snapshot stays NULL in this mode
+                column = "master_data_snapshot" if key == "master_data" else key
+                fields[column] = value.model_dump(mode="json")
 
         async with AsyncSessionLocal() as session:
             await PlanningRunRepository(session).create(**fields)
@@ -132,15 +172,66 @@ async def _persist_run(
         logger.warning(f"Failed to persist planning run audit row: {exc}")
 
 
-async def run_planning_workflow(request: PlanningRequest) -> PlanningState:
+async def run_planning_workflow(request: PlanningRequest, *, force_rerun: bool = False) -> PlanningState:
+    # Load master data once, standalone, before deciding whether to run the
+    # graph at all - both to fingerprint it for the idempotency cache lookup
+    # below, and (on a cache miss) to seed the graph's initial state so
+    # `load_master_data_node` doesn't load it a second time (see that node's
+    # docstring in master_data_agent.py). Wrapped in its own try/except since
+    # a failure here (e.g. a bad DATABASE_URL) is just as real a failed run as
+    # one raised mid-graph, and needs the same FAILED audit row.
+    try:
+        preload = await load_master_data_node({"request": request})
+    except Exception as exc:
+        await _persist_run(request, state=None, error=exc, data_fingerprint=None)
+        raise
+
+    snapshot = preload["master_data"]
+    data_fingerprint = compute_data_fingerprint(snapshot)
+
+    if not force_rerun:
+        cached = await _find_cached_success(request, data_fingerprint)
+        if cached is not None:
+            logger.info(
+                f"Idempotent hit: reusing PlanningRun #{cached.id} for this exact scope, data, "
+                "and reasoning engine - no new computation, no new LLM calls."
+            )
+            return cached.to_state_dict()
+
     graph = build_graph()
-    initial_state: PlanningState = {"request": request, "trace": [], "errors": [], "replanning_attempts": 0}
+    initial_state: PlanningState = {
+        "request": request,
+        "master_data": snapshot,
+        "trace": [],
+        "errors": [],
+        "replanning_attempts": 0,
+    }
 
     try:
         result = await graph.ainvoke(initial_state)
     except Exception as exc:
-        await _persist_run(request, state=None, error=exc)
+        await _persist_run(request, state=None, error=exc, data_fingerprint=data_fingerprint)
         raise
 
-    await _persist_run(request, state=result, error=None)
+    await _persist_run(request, state=result, error=None, data_fingerprint=data_fingerprint)
     return result
+
+
+async def _find_cached_success(request: PlanningRequest, data_fingerprint: str) -> PlanningRunRead | None:
+    """The idempotency cache lookup, isolated so a DB hiccup here can never
+    block a run - on failure this just logs and falls through to a fresh
+    computation, same "never break the real run" philosophy as `_persist_run`.
+    """
+    try:
+        settings = get_settings()
+        async with AsyncSessionLocal() as session:
+            row = await PlanningRunRepository(session).find_success_by_scope_data_and_engine(
+                scope_key=request.scope_key(),
+                data_fingerprint=data_fingerprint,
+                llm_provider=settings.llm_provider,
+                llm_model=get_active_model_name(),
+            )
+        return PlanningRunRead.model_validate(row) if row is not None else None
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        logger.warning(f"Idempotency cache lookup failed, proceeding with a fresh run: {exc}")
+        return None

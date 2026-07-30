@@ -16,7 +16,7 @@ from app.schemas.cost_optimization import CostedLine, CostOptimizationResult, Sc
 from app.schemas.decision_review import DecisionReviewResult
 from app.schemas.distance import DistanceMatrixRead
 from app.schemas.inventory import InventoryRead
-from app.schemas.planning import MasterDataSnapshot
+from app.schemas.planning import MasterDataSnapshot, PlanningRequest
 from app.schemas.product import ProductRead
 from app.schemas.store import StoreRead
 from app.schemas.terminal import TerminalRead
@@ -107,7 +107,7 @@ def _cost_summary(strategy: str, quantity: int, total_cost: float, hp_fulfilled=
         strategy=strategy, lines=[line], total_transportation_cost=total_cost, total_handling_cost=0,
         total_holding_cost=0, total_delay_penalty=0, total_cost=total_cost,
         high_priority_shortages_fulfilled=hp_fulfilled, high_priority_shortages_total=hp_total,
-        fully_satisfies_high_priority=(hp_fulfilled == hp_total),
+        fully_satisfies_high_priority=(hp_fulfilled == hp_total), fulfillment_rate=1.0,
     )
 
 
@@ -132,6 +132,7 @@ async def test_only_valid_scenarios_are_reviewed_and_best_is_selected():
     bad_cost = _cost_summary("score_first", 10, total_cost=50.0)  # cheaper but invalid
 
     state = {
+        "request": PlanningRequest(),
         "master_data": _snapshot(),
         "allocation": AllocationResult(scenarios=[good, bad], recommended_strategy="score_first"),
         "cost_optimization": CostOptimizationResult(
@@ -167,6 +168,7 @@ async def test_falls_back_to_best_effort_scenario_when_none_valid():
     only_cost = _cost_summary("priority_first", 10, total_cost=100.0)
 
     state = {
+        "request": PlanningRequest(),
         "master_data": _snapshot(),
         "allocation": AllocationResult(scenarios=[only], recommended_strategy="priority_first"),
         "cost_optimization": CostOptimizationResult(

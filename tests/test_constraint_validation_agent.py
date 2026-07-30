@@ -73,7 +73,7 @@ def _cost_summary(strategy, lines, total_cost=100.0, hp_fulfilled=1, hp_total=1)
         strategy=strategy, lines=costed, total_transportation_cost=10.0, total_handling_cost=1.0,
         total_holding_cost=1.0, total_delay_penalty=0.0, total_cost=total_cost,
         high_priority_shortages_fulfilled=hp_fulfilled, high_priority_shortages_total=hp_total,
-        fully_satisfies_high_priority=(hp_fulfilled == hp_total),
+        fully_satisfies_high_priority=(hp_fulfilled == hp_total), fulfillment_rate=1.0,
     )
 
 

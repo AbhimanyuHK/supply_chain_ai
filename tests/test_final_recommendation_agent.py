@@ -16,7 +16,7 @@ from app.schemas.cost_optimization import CostedLine, CostOptimizationResult, Sc
 from app.schemas.decision_review import DecisionReviewResult, ScenarioEvaluation
 from app.schemas.final_recommendation import FinalRecommendation
 from app.schemas.inventory import InventoryRead
-from app.schemas.planning import MasterDataSnapshot
+from app.schemas.planning import MasterDataSnapshot, PlanningRequest
 from app.schemas.product import ProductRead
 from app.schemas.store import StoreRead
 from app.schemas.supply_planning import CandidatePlan, SupplyPlanningResult
@@ -53,6 +53,7 @@ def _cost_summary(strategy: str, lines: list[AllocationLine], total_cost: float)
         strategy=strategy, lines=costed, total_transportation_cost=40.0, total_handling_cost=5.0,
         total_holding_cost=2.0, total_delay_penalty=0.0, total_cost=total_cost,
         high_priority_shortages_fulfilled=1, high_priority_shortages_total=1, fully_satisfies_high_priority=True,
+        fulfillment_rate=1.0,
     )
 
 
@@ -179,6 +180,7 @@ async def test_recommend_final_node_synthesizes_full_recommendation():
     )
 
     state = {
+        "request": PlanningRequest(),
         "master_data": _snapshot(),
         "allocation": AllocationResult(scenarios=[scenario], recommended_strategy="priority_first"),
         "cost_optimization": CostOptimizationResult(

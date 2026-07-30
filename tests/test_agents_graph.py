@@ -1,6 +1,7 @@
 import datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.agents.demand_forecast_agent import forecast_demand_node
 from app.agents.graph import build_graph, run_planning_workflow
@@ -354,3 +355,68 @@ async def test_run_planning_workflow_persists_a_failed_row_and_still_raises(comm
     assert "simulated node failure" in run.error_message
     assert run.master_data_snapshot is None
     assert run.final_recommendation is None
+
+
+@pytest.mark.asyncio
+async def test_run_planning_workflow_returns_cached_result_on_second_call(committed_db):
+    await _seed_minimal(committed_db, with_demand_history=True, store_available_qty=50)
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    result1 = await run_planning_workflow(request)
+    result2 = await run_planning_workflow(request)
+
+    async with committed_db() as session:
+        rows = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
+
+    # Only the first call actually computed anything - the second was a cache hit,
+    # so no second row was written, and the result is identical.
+    assert len(rows) == 1
+    assert result2["trace"] == result1["trace"]
+    assert result2["final_recommendation"].selected_strategy == result1["final_recommendation"].selected_strategy
+
+
+@pytest.mark.asyncio
+async def test_run_planning_workflow_force_rerun_recomputes(committed_db):
+    await _seed_minimal(committed_db, with_demand_history=True, store_available_qty=50)
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    await run_planning_workflow(request)
+    await run_planning_workflow(request, force_rerun=True)
+
+    async with committed_db() as session:
+        rows = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
+
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_planning_workflow_cache_miss_when_data_changes(committed_db):
+    await _seed_minimal(committed_db, with_demand_history=True, store_available_qty=50)
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    await run_planning_workflow(request)
+
+    # The underlying data genuinely changed since the cached run - a repeat call
+    # (without force_rerun) must not reuse a now-stale result.
+    async with committed_db() as session:
+        result = await session.execute(
+            select(Inventory).where(Inventory.location_type == LocationType.STORE)
+        )
+        store_inventory = result.scalars().first()
+        store_inventory.available_qty = 999
+        await session.commit()
+
+    await run_planning_workflow(request)
+
+    async with committed_db() as session:
+        rows = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
+
+    assert len(rows) == 2
+
+
+def test_scope_key_differs_by_optimization_objective():
+    base = PlanningRequest(planning_date=datetime.date(2026, 1, 1), store_ids=[1], product_ids=[1])
+    minimize_cost = base.model_copy(update={"optimization_objective": "minimize_cost"})
+    maximize_service = base.model_copy(update={"optimization_objective": "maximize_service_level"})
+
+    assert minimize_cost.scope_key() != maximize_service.scope_key()
