@@ -1,0 +1,285 @@
+# AI-Powered Supply Chain Planning Platform
+
+Enterprise supply chain planning system: demand forecasting, inventory analysis, supply
+allocation, cost optimization, and constraint validation, orchestrated by a LangGraph
+agent workflow reasoning through Groq. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+for the module layout and design decisions.
+
+> **Status: all 10 Phase 1 agents are built** (Modules 1-10) — every agent in the spec's
+> 13-agent list except Phase 2's Fleet Assignment/Route Planning/ETA Prediction/Exception
+> Handling. The LangGraph workflow runs Master Data → Demand Forecast (real HuggingFace
+> Chronos) → Inventory Analysis → Supply Planning (Groq) → Allocation (Groq) → Cost
+> Optimization (real fleet-based costing) → Constraint Validation (rejects invalid plans,
+> loops back to Supply Planning for replanning) → Decision Review (Groq) → Final
+> Recommendation (Groq) end to end, producing a full shipment plan with business
+> explanation, risk assessment, alternatives, confidence score, and expected
+> inventory/service level. See the "Current status" section at the bottom for exactly
+> what's built vs. still open (Phase 2, some REST endpoints, a couple of explicitly
+> out-of-scope constraints).
+
+---
+
+## 1. Prerequisites
+
+- Python 3.12 recommended (3.10+ works for this module; some later modules may need 3.12).
+- No Docker required for local development — the app defaults to a local SQLite file.
+- Docker + Docker Compose only if you want to run against Postgres (the production-shaped
+  path) instead of SQLite.
+
+## 2. Set up the virtual environment
+
+```bash
+cd D:\AI\suuply_chain_ai
+python -m venv venv
+```
+
+Activate it, then install dependencies:
+
+```bash
+venv\Scripts\python.exe -m pip install --upgrade pip
+venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+## 3. Configure environment variables
+
+A `.env` is already present, pointed at local SQLite:
+
+```
+DATABASE_URL=sqlite+aiosqlite:///./supply_chain.db
+GROQ_API_KEY=
+FLEET_MODULE_ENABLED=false
+```
+
+See [`.env.example`](.env.example) for every available setting, including the
+`postgresql+asyncpg://...` URL to use once you switch to Docker/Postgres (step 7).
+
+**You need a real `GROQ_API_KEY` starting with Module 5** (Supply Planning Agent) — it's
+the first node that calls an LLM. Modules 6, 9, and 10 (Allocation, Decision Review, Final
+Recommendation) each make their own Groq call too — four Groq calls total per full run.
+Module 8 (Constraint Validation) can loop back to Module 5, which re-calls Groq each time
+it does (up to `max_replanning_attempts`, default 2). Get a free key at
+[console.groq.com](https://console.groq.com) and set it in `.env`:
+
+```
+GROQ_API_KEY=gsk_...
+```
+
+Modules 1-4 (master data, Chronos forecasting, inventory analysis) need no API key at all.
+
+**Free-tier rate limit note**: Groq's free tier has a daily token cap (100,000 TPD as of
+this writing). Running the full test suite plus a few manual workflow runs in the same day
+can exhaust it — you'll see `groq.RateLimitError` (429). This is an external quota, not a
+bug; it clears after the daily window resets (the error message includes a retry-after
+estimate).
+
+## 4. Run database migrations
+
+Creates all 8 tables (`stores`, `terminals`, `products`, `inventory`, `demand_history`,
+`fleet`, `shipments`, `distance_matrix`) in `supply_chain.db`:
+
+```bash
+venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Re-runnable any time; `alembic downgrade base` reverses it.
+
+## 5. Seed sample data
+
+Populates the database with a realistic electronics-retail dataset — 6 stores, 3
+distribution terminals, 12 electronic products (phones, laptops, TVs, etc.), inventory at
+every location, 30 days of demand history, a small fleet per terminal, and a
+terminal-to-store distance matrix:
+
+```bash
+venv\Scripts\python.exe scripts\seed_data.py
+```
+
+Safe to re-run — it wipes and re-inserts these 8 tables' rows each time (deterministic,
+seeded random data, so the numbers are the same every run).
+
+## 6. Run the planning workflow (Modules 2-10, full Phase 1 pipeline)
+
+Runs the complete LangGraph workflow — load master data, forecast demand with Chronos,
+analyze inventory (safety stock / reorder point / shortages), plan supply for any
+shortages via Groq, build and rank allocation scenarios via a second Groq call, recompute
+real fleet-based costs for each scenario (no Groq call), validate all three scenarios
+against real constraints (looping back to Supply Planning, with the actual violation
+reasons, if none pass), holistically score every *valid* scenario via a third Groq call,
+then synthesize a final recommendation via a fourth Groq call — and prints a snapshot
+summary, a forecast sample, shortages found, ranked candidate shipment plans, ranked
+allocation scenarios, a real cost breakdown, each scenario's validation status, the
+multi-dimension-scored selection, and the final recommendation (shipment plan with
+per-line explanations, business explanation, risk assessment, contingency actions,
+confidence score, expected inventory after shipment, and alternatives):
+
+```bash
+venv\Scripts\python.exe scripts\run_planning_workflow.py
+```
+
+Optionally scope it to specific stores/products:
+
+```bash
+venv\Scripts\python.exe scripts\run_planning_workflow.py --store-ids 1 2 --product-ids 1 2 3
+```
+
+The first run downloads the Chronos model (`amazon/chronos-t5-tiny`, ~30-40MB) from
+HuggingFace and caches it locally (`~/.cache/huggingface`); subsequent runs reuse the
+cache. If there are no shortages in the scope you ran, all four Groq-calling nodes make
+zero calls (and Cost Optimization/Constraint Validation have nothing to cost/validate) —
+`GROQ_API_KEY` isn't needed for that run. If Constraint Validation loops back to Supply
+Planning, expect to see "Planned supply..." appear more than once in the trace, and
+additional Groq calls each time.
+
+Note: on Windows you may see a harmless `RuntimeError: Event loop is closed` printed
+*after* all output, during interpreter shutdown — it's a known cosmetic artifact of async
+HTTP clients on Windows' proactor event loop, not a bug in this code (exit code is still 0).
+
+## 7. Run the API
+
+```bash
+venv\Scripts\python.exe -m uvicorn app.api.main:app --reload --port 8000
+```
+
+Check it's alive:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Expect `{"status": "ok", "dependencies": {"database": "ok"}}`.
+
+## 8. (Optional) Switch to Postgres via Docker
+
+If you have Docker installed:
+
+```bash
+docker compose up -d
+```
+
+This starts Postgres 16 and builds/runs the app container (which runs
+`alembic upgrade head` automatically on startup, then seed manually the same way as
+step 5 but pointed at the container's Postgres). To point your local `venv` at the
+Postgres container instead of SQLite, change `DATABASE_URL` in `.env` to:
+
+```
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/supply_chain
+```
+
+## 9. Run the tests
+
+```bash
+venv\Scripts\python.exe -m pytest -v
+```
+
+85 tests covering config loading, ORM model CRUD + constraint enforcement, the `/health`
+endpoint, the repository layer, `MasterDataService` scoping, the Chronos forecaster
+wrapper, inventory analysis math (safety stock/reorder point/shortage, store-vs-terminal
+scoping), Supply Planning candidate generation, Allocation's three strategies (including a
+deliberately scarce-stock scenario that forces them to genuinely diverge), Cost
+Optimization's vehicle selection/costing math (including a deliberately-wrong allocation
+cost estimate to prove it gets recomputed, not trusted), Constraint Validation's checks
+(one deliberate violation per constraint) and its replanning decision tree, an end-to-end
+test that forces every scenario to fail validation and confirms the graph loops back to
+Supply Planning exactly `max_replanning_attempts + 1` times before giving up, Decision
+Review's evaluation math and its "only review valid scenarios" rule, Final
+Recommendation's shipment-plan/expected-inventory/alternatives construction (each its own
+testable function, independent of the Groq synthesis call), and other end-to-end LangGraph
+runs — all against a real (SQLite) database, the real Chronos model, and (where relevant)
+real Groq calls, nothing is mocked.
+
+**Tests that call Groq are automatically skipped if `GROQ_API_KEY` isn't set** (`skipif`
+on `get_settings().groq_api_key`), so the full suite still runs without a key — you'll just
+see a handful of `SKIPPED` instead of `PASSED`. With a key set and quota available, all 86
+run for real, though running the full suite repeatedly in one day can trip Groq's
+free-tier daily token cap (see the rate-limit note in step 3) — a `RateLimitError` there is
+an external quota, not a test failure; the deterministic logic each Groq-calling agent
+depends on is covered by separate non-Groq tests, so a quota outage only blocks the
+handful of tests that need a live LLM response, not verification of the surrounding logic.
+First test run pays the same one-time Chronos model download/load cost as step 6.
+
+---
+
+## Current status vs. the full spec
+
+**All 10 Phase 1 modules are built** — every agent in the spec's 13-agent list except
+Phase 2's fleet/route/ETA agents:
+
+- **Module 1**: clean-architecture scaffold, config/logging/error handling, all 8 core
+  tables + Alembic migration, FastAPI app + `/health`, sample electronics dataset seeder
+- **Module 2**: repository layer (DI via constructor-injected session) for all 7 read
+  entities, business rules config, `PlanningRequest`/`MasterDataSnapshot` schemas,
+  `MasterDataService` (scoped master-data loading), the LangGraph `PlanningState` +
+  Master Data Agent node
+- **Module 3**: real HuggingFace Chronos zero-shot demand forecasting per store/product,
+  batched/chunked for scale, wired as the graph's second node
+- **Module 4**: safety stock / reorder point / shortage detection for store inventory
+  (using Module 3's forecast as the demand signal), plus raw on-hand/available/
+  reserved/incoming reporting for every location, wired as the graph's third node
+- **Module 5**: Supply Planning Agent — first real Groq reasoning. For every shortage,
+  finds candidate terminals from real inventory + distance-matrix data, asks Groq to
+  propose and score alternative candidate plans (quantity/rationale/score only — cost,
+  distance, and delivery time are always computed from real data, never from the LLM),
+  wired as the graph's fourth node
+- **Module 6**: Allocation Agent — second Groq call. Builds three deterministic allocation
+  scenarios (`priority_first`, `score_first`, `balanced`) that treat shared terminal stock
+  as a real constraint across *all* shortages at once (Module 5's candidates were generated
+  independently per shortage, so two stores could otherwise double-book the same stock),
+  then asks Groq to rank the finished scenarios with rationale, wired as the graph's fifth
+  node
+- **Module 7**: Cost Optimization Agent — no Groq call. Recomputes a real cost breakdown
+  for each of Module 6's scenarios (actual fleet vehicle selection by weight/volume
+  capacity, warehouse handling, inventory holding, delay penalties — replacing the earlier
+  flat per-km proxy), then deterministically recommends the cheapest scenario that still
+  fully covers every high-priority shortage, wired as the graph's sixth node
+- **Module 8**: Constraint Validation Agent — no Groq call, but the workflow's **first
+  feedback loop**. Validates all three scenarios against real constraints (available
+  inventory, store/terminal capacity, lead time, min/max shipment quantity, high-priority
+  coverage); if the recommended scenario fails, switches to a valid alternative if one
+  exists, else sends the actual violation reasons back to Supply Planning for a real
+  correction attempt (not a blind retry) — capped at `max_replanning_attempts` (default 2)
+  — else proceeds best-effort with the violations flagged in `errors`. Wired as the
+  graph's seventh node, with a conditional edge back to `plan_supply`.
+- **Module 9**: Decision Review Agent — third Groq call. Adds the spec's remaining
+  evaluation dimensions (inventory balance, transportation distance, future inventory
+  risk) to Modules 6/7's fulfillment/cost/priority metrics, computed from real data; Groq
+  scores each *valid* (constraint-passing) scenario 0-100 holistically, and the final
+  selection is `argmax(score)` in code, not an LLM declaration. Falls back to reviewing
+  Module 8's single best-effort scenario alone (and says so) if nothing validated. Wired
+  as the graph's eighth node.
+- **Module 10**: Final Recommendation Agent — fourth Groq call, the **last Phase 1 agent**.
+  Assembles the final shipment plan (real per-line costs from Module 7, each line's
+  explanation reused from Module 5's own rationale — not a fresh LLM call per line),
+  expected inventory after shipment, expected service level, and alternative
+  recommendations, all deterministically from data already computed. The one genuine
+  synthesis task — a business explanation, risk assessment, contingency actions, and a
+  calibrated confidence score (which drops noticeably if Module 8 had to fall back to a
+  constraint-violating plan) — is Groq's job, given those real metrics. Wired as the
+  graph's ninth and final node.
+- 86 passing tests (Groq-dependent ones auto-skip without a key; each Groq-calling agent's
+  deterministic logic has its own separately-testable, non-Groq-dependent coverage)
+- A manual run script (`scripts/run_planning_workflow.py`) exercising the full 9-node
+  pipeline end to end
+
+**Not yet built** (Phase 2, plus a few explicitly out-of-scope gaps):
+
+- Phase 2's Fleet Assignment, Route Planning, and ETA Prediction/Exception Handling agents
+  and their graph nodes/edges (gated behind `Settings.fleet_module_enabled`, not started)
+- The `/forecast`, `/inventory` (POST), `/optimize`, `/fleet/assign`, `/route/optimize`,
+  `/simulate`, `/shipments` endpoints — only routing scaffolding exists, no business logic
+  wired to the LangGraph workflow yet
+- A forward-looking promotions/holiday calendar (the Demand Forecast Agent has no such
+  input to work from — see `docs/ARCHITECTURE.md`'s Module 3 section)
+- Two of the spec's nine listed constraints (safety stock as a separate check, product
+  restrictions) are explicitly out of scope — no distinct/real data to check them against,
+  see `docs/ARCHITECTURE.md`'s Module 8 section
+
+So today you can stand up the database, seed realistic data, and run the entire Phase 1
+pipeline end to end: a scoped master-data snapshot, a real per-store/per-product demand
+forecast, a shortage report for store inventory, several real Groq-reasoned candidate
+shipment plans per shortage, three ranked allocation scenarios across all shortages at
+once, a real fleet-based cost breakdown, a constraint-validated set of scenarios (with
+automatic replanning if nothing passed), a holistically-scored final selection, and a
+complete final recommendation — shipment plan, business explanation, risk assessment,
+contingency actions, confidence score, expected inventory, expected service level, and
+alternatives. What's not built is Phase 2 (fleet/route optimization) and the REST API
+surface for triggering all this over HTTP instead of the CLI script.

@@ -1,0 +1,28 @@
+# Business rules consumed by the Master Data Agent and later planning agents.
+# The original spec lists "Business Rules" as master data to load but defines
+# no database table for it, so it lives here as an editable config file
+# instead of hardcoded defaults.
+
+default_safety_stock_days: 7
+default_lead_time_days: 2
+min_shipment_qty: 1
+max_shipment_qty_per_product: 5000
+reorder_point_multiplier: 1.5
+high_priority_store_threshold: 2
+
+# Rough per-km cost proxy used by the Supply Planning/Allocation Agents to compare
+# candidate plans, and as a Cost Optimization fallback when no fleet exists at a
+# terminal. Not real costing where real fleet data is available.
+estimated_transport_cost_per_km: 50.0
+
+# Cost Optimization Agent rates - combined loading+unloading cost per unit,
+# inventory holding cost as a fraction of unit cost per day, and a delay
+# penalty per hour of delivery time beyond the acceptable lead time.
+warehouse_handling_cost_per_unit: 5.0
+inventory_holding_cost_rate: 0.0005
+delay_penalty_per_hour: 20.0
+
+# Constraint Validation Agent - hard cap on delivery time, distinct from
+# default_lead_time_days (the soft/target threshold Cost Optimization uses for
+# delay penalties). Exceeding this is a rejected plan, not just a cost.
+max_lead_time_days: 5

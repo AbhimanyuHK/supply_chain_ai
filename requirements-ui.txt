@@ -1,0 +1,32 @@
+# Streamlit demo dashboard (streamlit_app.py) install list.
+#
+# This deliberately does NOT `-r requirements.txt`: streamlit_app.py only imports
+# app.agents.graph / app.core.config / app.database.* / app.schemas.planning, none
+# of which touch FastAPI, so fastapi/uvicorn are left out here entirely. That's not
+# just to keep the install lean - fastapi==0.115.6 pins `starlette<0.42`, while
+# streamlit 1.60.0's actual runtime code needs a starlette new enough to export
+# `DEFAULT_EXCLUDED_CONTENT_TYPES` from starlette.middleware.gzip (added well after
+# 0.42, even though streamlit's own metadata under-declares its floor as >=0.40).
+# The two can't be satisfied in one environment - hence this dashboard runs from
+# its own venv (venv-ui/), separate from the API's venv/.
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+
+loguru==0.7.3
+python-dotenv==1.0.1
+
+langgraph==0.2.62
+langchain-core==0.3.86
+langchain-groq==0.2.3
+langchain-ollama==0.3.10
+groq==0.13.1
+
+torch==2.13.0
+transformers==4.57.6
+accelerate==1.14.0
+chronos-forecasting==1.5.3
+
+streamlit==1.60.0

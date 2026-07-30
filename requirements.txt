@@ -1,0 +1,28 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+aiosqlite==0.20.0
+alembic==1.14.0
+
+loguru==0.7.3
+python-dotenv==1.0.1
+
+# Reasoning / agent orchestration stack (wired starting Module 2).
+# Groq is the primary reasoning engine; Ollama is a local fallback (Module 11) for
+# when Groq's quota/connectivity isn't available - see app/core/llm.py.
+langgraph==0.2.62
+langchain-core==0.3.86
+langchain-groq==0.2.3
+langchain-ollama==0.3.10
+groq==0.13.1
+
+# Demand Forecast Agent (Module 3) - HuggingFace Chronos zero-shot time series model.
+# CPU-only inference; first run downloads the model weights (~30-40MB for chronos-t5-tiny).
+torch==2.13.0
+transformers==4.57.6
+accelerate==1.14.0
+chronos-forecasting==1.5.3
