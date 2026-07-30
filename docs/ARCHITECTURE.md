@@ -441,10 +441,13 @@ external quota, all four LLM-calling agents get their model from one factory,
   produced a result — this mattered in practice: earlier versions hardcoded
   `settings.groq_model` in trace strings, which kept saying "via
   llama-3.3-70b-versatile" even during a live Ollama run.
-- **Gemini** (`gemini-2.5-flash` by default) is a free-tier cloud alternative — rate
-  limits are per-minute rather than Groq's flat daily cap, so it's a useful second cloud
-  option when Groq's quota is exhausted mid-session but a local Ollama run would be too
-  slow for the moment.
+- **Gemini** (`gemini-2.5-flash` by default) is a free-tier cloud alternative, but its
+  rate limit is tight: only **5 requests/minute** on Flash models (confirmed via Google
+  AI Studio's usage dashboard), reset per-minute rather than Groq's flat daily cap. Since
+  every shortage costs 4 LLM calls, one shortage can bump into that ceiling and multiple
+  shortages in one run almost certainly will (`429 RESOURCE_EXHAUSTED` with a ~47s
+  `retry_delay` is expected there, not a bug). Best suited to quick single-shortage test
+  runs; Groq (higher throughput) or Ollama (no limit) are better for heavier runs.
 - Local Ollama models need tool-calling support (`with_structured_output`'s default
   method) — check `ollama show <model>` lists `tools` under capabilities before using one
   here. `mistral` does; some smaller models (e.g. `phi3`) may not.

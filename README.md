@@ -99,11 +99,17 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_TEMPERATURE=0.1
 ```
 
-**Gemini** (Google AI Studio) is a good middle ground when Groq's quota runs out but you
-still want cloud speed: get a free key at
+**Gemini** (Google AI Studio) is a free-tier cloud alternative: get a free key at
 [aistudio.google.com/apikey](https://aistudio.google.com/apikey), set `GEMINI_API_KEY`
-and `LLM_PROVIDER=gemini`. Its free tier is rate-limited per-minute rather than Groq's
-flat 100,000/day cap, so it's less likely to be fully exhausted by normal test-suite runs.
+and `LLM_PROVIDER=gemini`. Its free tier is rate-limited **per minute rather than per
+day** — but that limit is tight: only **5 requests/minute** on Flash models (2.5 and
+3.5), confirmed via Google AI Studio's own usage dashboard. Since every shortage costs 4
+LLM calls (Supply Planning, Allocation, Decision Review, Final Recommendation), a single
+shortage can bump into that ceiling, and a run with several shortages almost certainly
+will (a `429 RESOURCE_EXHAUSTED` with a ~47s `retry_delay` is expected in that case, not
+a bug). Gemini works well for quick single-shortage test runs; for anything heavier,
+prefer Groq (higher throughput, just a daily rather than per-minute cap) or Ollama (no
+limit at all, just much slower).
 
 To use **Ollama** instead: install [Ollama](https://ollama.com), run `ollama serve` (or
 let the desktop app run it), pull a tool-calling-capable model (`ollama pull mistral`),
