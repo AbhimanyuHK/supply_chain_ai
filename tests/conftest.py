@@ -26,9 +26,14 @@ from app.models import entities  # noqa: E402,F401 (registers all tables on Base
 
 
 requires_llm_configured = pytest.mark.skipif(
-    not (get_settings().groq_api_key or get_settings().llm_provider == "ollama"),
-    reason="requires a real GROQ_API_KEY, or LLM_PROVIDER=ollama with a local Ollama server "
-    "running (this test calls the configured reasoning engine - see app/core/llm.py)",
+    not (
+        get_settings().groq_api_key
+        or get_settings().gemini_api_key
+        or get_settings().llm_provider == "ollama"
+    ),
+    reason="requires a real GROQ_API_KEY or GEMINI_API_KEY, or LLM_PROVIDER=ollama with a "
+    "local Ollama server running (this test calls the configured reasoning engine - see "
+    "app/core/llm.py)",
 )
 
 

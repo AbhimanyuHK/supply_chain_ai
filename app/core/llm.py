@@ -1,11 +1,13 @@
 """Reasoning-engine factory shared by every LLM-calling agent.
 
-Groq is the primary reasoning engine per the spec. Ollama is a local
-fallback - no API key, no cloud quota, no network required beyond the local
-Ollama server - for when Groq's daily quota or connectivity isn't available.
-Switching between them is one `.env` line (`LLM_PROVIDER=groq|ollama`), not
-a code change, and every agent already goes through this single factory
-rather than constructing its own `ChatGroq`.
+Groq is the primary reasoning engine per the spec. Gemini (Google AI Studio)
+is a free-tier cloud alternative - per-minute rate limits rather than Groq's
+flat 100k/day token cap - for when Groq's quota is exhausted but a cloud
+model is still preferred. Ollama is a fully local fallback - no API key, no
+cloud quota, no network required beyond the local Ollama server. Switching
+between them is one `.env` line (`LLM_PROVIDER=groq|gemini|ollama`), not a
+code change, and every agent already goes through this single factory rather
+than constructing its own `ChatGroq`.
 
 Each agent still calls `.with_structured_output(ItsOwnSchema)` on the model
 this returns, since each has a different Pydantic output schema - this
@@ -24,6 +26,8 @@ def get_active_model_name() -> str:
     settings = get_settings()
     if settings.llm_provider == "ollama":
         return f"ollama/{settings.ollama_model}"
+    if settings.llm_provider == "gemini":
+        return f"gemini/{settings.gemini_model}"
     return settings.groq_model
 
 
@@ -44,6 +48,15 @@ def get_chat_model() -> Any:
             model=settings.ollama_model,
             base_url=settings.ollama_base_url,
             temperature=settings.ollama_temperature,
+        )
+
+    if settings.llm_provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_model,
+            google_api_key=settings.gemini_api_key,
+            temperature=settings.gemini_temperature,
         )
 
     from langchain_groq import ChatGroq

@@ -6,7 +6,7 @@
 app/
   core/          config.py (Settings), logging.py (loguru setup), exceptions.py,
                  business_rules.py (loads config/business_rules.yaml), llm.py
-                 (Groq/Ollama reasoning-engine factory — see "Reasoning engine
+                 (Groq/Gemini/Ollama reasoning-engine factory — see "Reasoning engine
                  abstraction" below)
   database/      base.py (declarative Base), session.py (async engine/session/get_db)
     repositories/  one per entity (store, terminal, product, inventory, demand_history,
@@ -420,35 +420,41 @@ Cost Optimization → Constraint Validation (with a replanning loop back to Supp
 Allocation, Decision Review, Final Recommendation) and HuggingFace Chronos once (Demand
 Forecast), with every other step pure deterministic computation against real data.
 
-## Reasoning engine abstraction: Groq vs. local Ollama
+## Reasoning engine abstraction: Groq vs. Gemini vs. local Ollama
 
 Groq's free tier has a 100,000 token/day cap (see the README's rate-limit note), which
 normal test-suite + manual-run usage can exhaust mid-session. Rather than block on that
 external quota, all four LLM-calling agents get their model from one factory,
 `app/core/llm.py`:
 
-- **`get_chat_model()`**: returns `ChatGroq(...)` or `ChatOllama(...)` depending on
-  `Settings.llm_provider` (`"groq"` default, or `"ollama"`), `@lru_cache`'d like the
-  Chronos pipeline. Each agent calls `get_chat_model().with_structured_output(Schema)` —
-  identical structured-output contract either way, since both `langchain-groq` and
-  `langchain-ollama` implement the same `with_structured_output` interface via
-  tool-calling. Switching provider is a one-line `.env` change (`LLM_PROVIDER=ollama`),
-  no code change in any agent.
+- **`get_chat_model()`**: returns `ChatGroq(...)`, `ChatGoogleGenerativeAI(...)`, or
+  `ChatOllama(...)` depending on `Settings.llm_provider` (`"groq"` default, `"gemini"`,
+  or `"ollama"`), `@lru_cache`'d like the Chronos pipeline. Each agent calls
+  `get_chat_model().with_structured_output(Schema)` — identical structured-output
+  contract across all three, since `langchain-groq`, `langchain-google-genai`, and
+  `langchain-ollama` all implement the same `with_structured_output` interface via
+  tool-calling. Switching provider is a one-line `.env` change (`LLM_PROVIDER=gemini` or
+  `=ollama`), no code change in any agent.
 - **`get_active_model_name()`**: returns a human-readable model name (e.g.
-  `ollama/mistral` vs `llama-3.3-70b-versatile`) for trace/log messages, so a run's trace
-  never misattributes which engine actually produced a result — this mattered in
-  practice: earlier versions hardcoded `settings.groq_model` in trace strings, which kept
-  saying "via llama-3.3-70b-versatile" even during a live Ollama run.
+  `ollama/mistral`, `gemini/gemini-2.5-flash`, or `llama-3.3-70b-versatile`) for
+  trace/log messages, so a run's trace never misattributes which engine actually
+  produced a result — this mattered in practice: earlier versions hardcoded
+  `settings.groq_model` in trace strings, which kept saying "via
+  llama-3.3-70b-versatile" even during a live Ollama run.
+- **Gemini** (`gemini-2.5-flash` by default) is a free-tier cloud alternative — rate
+  limits are per-minute rather than Groq's flat daily cap, so it's a useful second cloud
+  option when Groq's quota is exhausted mid-session but a local Ollama run would be too
+  slow for the moment.
 - Local Ollama models need tool-calling support (`with_structured_output`'s default
   method) — check `ollama show <model>` lists `tools` under capabilities before using one
   here. `mistral` does; some smaller models (e.g. `phi3`) may not.
 - **Tests**: `tests/conftest.py::requires_llm_configured` replaces what used to be five
   near-identical `requires_groq_key` markers (one per LLM-calling test file, each
-  skipping only on `not settings.groq_api_key`). The shared marker skips only when
-  *neither* engine is configured (`not (groq_api_key or llm_provider == "ollama")`), so
-  the same tests provide real coverage against whichever engine is actually set up —
-  this is what lets CI's Ollama job (below) exercise real assertions instead of every
-  LLM-gated test skipping silently.
+  skipping only on `not settings.groq_api_key`). The shared marker skips only when *none*
+  of the three engines are configured (`not (groq_api_key or gemini_api_key or
+  llm_provider == "ollama")`), so the same tests provide real coverage against whichever
+  engine is actually set up — this is what lets CI's Gemini/Ollama jobs (below) exercise
+  real assertions instead of every LLM-gated test skipping silently.
 
 ## Streamlit demo dashboard
 
@@ -473,17 +479,20 @@ chaining `-r requirements.txt`, letting `pip` resolve a modern starlette freely.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push/PR to `main` (plus manual dispatch) as two
-independent jobs, so both supported reasoning engines get exercised:
+`.github/workflows/ci.yml` runs on every push/PR to `main` (plus manual dispatch) as
+three independent jobs, so every supported reasoning engine gets exercised:
 
 - **`test-groq`**: installs `requirements-dev.txt`, runs `pytest` with `GROQ_API_KEY`
   from a `secrets.GROQ_API_KEY` repository secret. Missing secret → the LLM-gated tests
   skip (via `requires_llm_configured`); the job still passes.
+- **`test-gemini`**: same install, runs `pytest` with `GEMINI_API_KEY` from a
+  `secrets.GEMINI_API_KEY` repository secret and `LLM_PROVIDER=gemini`. Missing secret →
+  same graceful skip.
 - **`test-ollama`**: installs Ollama directly on the `ubuntu-latest` runner
   (`curl -fsSL https://ollama.com/install.sh | sh`), starts `ollama serve`, polls
   `/api/tags` until ready, pulls `mistral`, sets `LLM_PROVIDER=ollama`, then runs the
   identical `pytest` command — no secret needed. This is the same fallback path a
-  developer would use locally during a Groq quota outage, verified to behave the same
+  developer would use locally during a Groq/Gemini outage, verified to behave the same
   way in CI as on a local machine.
 
 Both jobs use `actions/setup-python`'s pip cache keyed on `requirements.txt` +

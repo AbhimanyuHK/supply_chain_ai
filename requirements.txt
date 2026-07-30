@@ -12,12 +12,14 @@ loguru==0.7.3
 python-dotenv==1.0.1
 
 # Reasoning / agent orchestration stack (wired starting Module 2).
-# Groq is the primary reasoning engine; Ollama is a local fallback (Module 11) for
-# when Groq's quota/connectivity isn't available - see app/core/llm.py.
+# Groq is the primary reasoning engine; Gemini is a free-tier cloud alternative and
+# Ollama a fully local fallback (both Module 11) for when Groq's quota/connectivity
+# isn't available - see app/core/llm.py.
 langgraph==0.2.62
 langchain-core==0.3.86
 langchain-groq==0.2.3
 langchain-ollama==0.3.10
+langchain-google-genai==2.1.12
 groq==0.13.1
 
 # Demand Forecast Agent (Module 3) - HuggingFace Chronos zero-shot time series model.

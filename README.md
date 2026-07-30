@@ -2,10 +2,10 @@
 
 Enterprise supply chain planning system: demand forecasting, inventory analysis, supply
 allocation, cost optimization, and constraint validation, orchestrated by a LangGraph
-agent workflow reasoning through Groq (or a local Ollama model — see step 3a) with a
-Streamlit demo dashboard (step 8) and GitHub Actions CI (step 11) testing both engines.
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module layout and design
-decisions.
+agent workflow reasoning through Groq, Gemini, or a local Ollama model (see step 3a) with
+a Streamlit demo dashboard (step 8) and GitHub Actions CI (step 11) testing all three
+engines. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module layout and
+design decisions.
 
 > **Status: all 10 Phase 1 agents are built** (Modules 1-10) — every agent in the spec's
 > 13-agent list except Phase 2's Fleet Assignment/Route Planning/ETA Prediction/Exception
@@ -75,18 +75,23 @@ can exhaust it — you'll see `groq.RateLimitError` (429). This is an external q
 bug; it clears after the daily window resets (the error message includes a retry-after
 estimate).
 
-### 3a. Switching reasoning engines: Groq vs. local Ollama
+### 3a. Switching reasoning engines: Groq vs. Gemini vs. local Ollama
 
 Every LLM-calling agent (Supply Planning, Allocation, Decision Review, Final
 Recommendation) goes through one factory, `app/core/llm.py`, so which reasoning engine
 they use is a one-line `.env` change, not a code change. This exists specifically so a
-Groq quota outage (see above) doesn't block you — switch to a fully local model and keep
-working:
+Groq quota outage (see above) doesn't block you — switch to a free-tier cloud
+alternative or a fully local model and keep working:
 
 ```
 # .env
 LLM_PROVIDER=groq   # default: cloud, needs GROQ_API_KEY
+# LLM_PROVIDER=gemini   # free-tier cloud alternative, needs GEMINI_API_KEY
 # LLM_PROVIDER=ollama   # fully local, no API key/quota - needs `ollama serve` running
+
+GEMINI_API_KEY=gsk_...           # free key at https://aistudio.google.com/apikey
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TEMPERATURE=0.1
 
 OLLAMA_MODEL=mistral            # must already be pulled (`ollama pull mistral`) and
                                  # support tool-calling (check with `ollama show <model>`)
@@ -94,12 +99,20 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_TEMPERATURE=0.1
 ```
 
-To use Ollama: install [Ollama](https://ollama.com), run `ollama serve` (or let the
-desktop app run it), pull a tool-calling-capable model (`ollama pull mistral`), then set
-`LLM_PROVIDER=ollama` in `.env`. Local inference is much slower than Groq (minutes, not
-seconds, per LLM call) but has no daily quota. Every trace/log line names the actual
-model that ran (e.g. `via ollama/mistral` vs `via llama-3.3-70b-versatile`), so output
-never misattributes which engine produced it.
+**Gemini** (Google AI Studio) is a good middle ground when Groq's quota runs out but you
+still want cloud speed: get a free key at
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey), set `GEMINI_API_KEY`
+and `LLM_PROVIDER=gemini`. Its free tier is rate-limited per-minute rather than Groq's
+flat 100,000/day cap, so it's less likely to be fully exhausted by normal test-suite runs.
+
+To use **Ollama** instead: install [Ollama](https://ollama.com), run `ollama serve` (or
+let the desktop app run it), pull a tool-calling-capable model (`ollama pull mistral`),
+then set `LLM_PROVIDER=ollama` in `.env`. Local inference is much slower than either
+cloud option (minutes, not seconds, per LLM call) but has no quota at all.
+
+Every trace/log line names the actual model that ran (e.g. `via ollama/mistral` vs
+`via gemini/gemini-2.5-flash` vs `via llama-3.3-70b-versatile`), so output never
+misattributes which engine produced it.
 
 ## 4. Run database migrations
 
@@ -254,37 +267,39 @@ runs — all against a real (SQLite) database, the real Chronos model, and (wher
 real Groq calls, nothing is mocked.
 
 **Tests that call an LLM are automatically skipped unless a reasoning engine is actually
-configured** (`tests/conftest.py::requires_llm_configured` — true when either
-`GROQ_API_KEY` is set, or `LLM_PROVIDER=ollama` with a local server running), so the full
-suite still runs with neither — you'll just see a handful of `SKIPPED` instead of
-`PASSED`. Set `LLM_PROVIDER=ollama` (with `ollama serve` running) to have those same
-tests exercise the local model instead of Groq — this is exactly how CI's Ollama job
-(see below) gets real coverage without a Groq key. With a key set and quota available,
-all 85 run for real against Groq, though running the full suite repeatedly in one day can
-trip Groq's free-tier daily token cap (see the rate-limit note in step 3) — a
-`RateLimitError` there is an external quota, not a test failure; the deterministic logic
-each LLM-calling agent depends on is covered by separate non-LLM tests, so a quota outage
-only blocks the handful of tests that need a live LLM response, not verification of the
-surrounding logic. First test run pays the same one-time Chronos model download/load cost
-as step 6.
+configured** (`tests/conftest.py::requires_llm_configured` — true when `GROQ_API_KEY` or
+`GEMINI_API_KEY` is set, or `LLM_PROVIDER=ollama` with a local server running), so the
+full suite still runs with none of those — you'll just see a handful of `SKIPPED`
+instead of `PASSED`. Set `LLM_PROVIDER=gemini`/`ollama` to have those same tests exercise
+that engine instead of Groq — this is exactly how CI's Gemini/Ollama jobs (see below) get
+real coverage without a Groq key. With a key set and quota available, all 85 run for real
+against Groq, though running the full suite repeatedly in one day can trip Groq's
+free-tier daily token cap (see the rate-limit note in step 3) — a `RateLimitError` there
+is an external quota, not a test failure; the deterministic logic each LLM-calling agent
+depends on is covered by separate non-LLM tests, so a quota outage only blocks the
+handful of tests that need a live LLM response, not verification of the surrounding
+logic. First test run pays the same one-time Chronos model download/load cost as step 6.
 
 ## 11. Continuous Integration
 
 `.github/workflows/ci.yml` runs the full pytest suite on every push/PR to `main` (and on
-manual dispatch), as two independent jobs so both supported reasoning engines get real
+manual dispatch), as three independent jobs so every supported reasoning engine gets real
 coverage:
 
 - **Tests (Groq)** — installs `requirements-dev.txt` and runs `pytest` with
   `GROQ_API_KEY` from a repository secret of the same name. If the secret isn't set, the
   Groq-gated tests just skip (see step 10) — the job doesn't fail.
+- **Tests (Gemini)** — same, but with `GEMINI_API_KEY` from a repository secret and
+  `LLM_PROVIDER=gemini`. Missing secret → skips the same way.
 - **Tests (Ollama, local)** — installs Ollama on the runner itself, starts `ollama
   serve`, pulls `mistral`, sets `LLM_PROVIDER=ollama`, and runs the same `pytest` suite —
   no secret needed, since it's fully local, matching how you'd run it on your own machine
-  during a Groq outage.
+  during a Groq/Gemini outage.
 
-To enable the Groq job's real coverage, add a repository secret named `GROQ_API_KEY`
-(Settings → Secrets and variables → Actions). Nothing else needs configuring — the
-workflow has no other secrets or external dependencies.
+To enable the Groq/Gemini jobs' real coverage, add repository secrets named
+`GROQ_API_KEY` and/or `GEMINI_API_KEY` (Settings → Secrets and variables → Actions).
+Nothing else needs configuring — the workflow has no other secrets or external
+dependencies.
 
 ---
 

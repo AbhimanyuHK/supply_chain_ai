@@ -41,13 +41,15 @@ class Settings(BaseSettings):
     database_max_overflow: int = 10
     database_echo: bool = False
 
-    llm_provider: Literal["groq", "ollama"] = Field(
+    llm_provider: Literal["groq", "ollama", "gemini"] = Field(
         default="groq",
         description=(
             "Which reasoning engine the 4 LLM-calling agents (Supply Planning, Allocation, "
             "Decision Review, Final Recommendation) use. 'groq' is the primary cloud engine; "
-            "'ollama' runs entirely locally (no API key/quota) as a fallback — see "
-            "app/core/llm.py. Switching is a one-line .env change, no code change."
+            "'gemini' is a free-tier cloud alternative (per-minute rate limits rather than "
+            "Groq's flat daily token cap); 'ollama' runs entirely locally (no API key/quota) "
+            "as a fallback — see app/core/llm.py. Switching is a one-line .env change, no "
+            "code change."
         ),
     )
 
@@ -58,6 +60,15 @@ class Settings(BaseSettings):
     )
     groq_temperature: float = 0.1
     groq_max_retries: int = 3
+
+    gemini_api_key: str = Field(
+        default="", description="API key for Google Gemini (AI Studio), used when llm_provider='gemini'."
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description="Gemini model used as the reasoning engine for all agents when llm_provider='gemini'.",
+    )
+    gemini_temperature: float = 0.1
 
     ollama_model: str = Field(
         default="mistral",
