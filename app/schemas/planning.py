@@ -4,6 +4,8 @@ downstream agent to share.
 """
 
 import datetime
+import hashlib
+import json
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +32,27 @@ class PlanningRequest(BaseModel):
     demand_history_window_days: int = Field(
         default=90, ge=1, description="How many days of trailing demand history to load."
     )
+
+    def scope_key(self) -> str:
+        """Deterministic fingerprint of this request's scope, for exact-match
+        "has this already been run?" lookups against `PlanningRun.scope_key`.
+
+        Store/product ids are sorted first so the same scope always hashes the
+        same way regardless of selection order. `planning_date` is included -
+        the Demand Forecast Agent's horizon depends on it, so a run from a
+        different calendar day genuinely isn't "the same scope" for reuse.
+        """
+        canonical = json.dumps(
+            {
+                "store_ids": sorted(self.store_ids) if self.store_ids else None,
+                "product_ids": sorted(self.product_ids) if self.product_ids else None,
+                "demand_history_window_days": self.demand_history_window_days,
+                "planning_date": self.planning_date.isoformat(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class MasterDataSnapshot(BaseModel):

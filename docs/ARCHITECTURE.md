@@ -10,20 +10,24 @@ app/
                  abstraction" below)
   database/      base.py (declarative Base), session.py (async engine/session/get_db)
     repositories/  one per entity (store, terminal, product, inventory, demand_history,
-                   fleet, distance_matrix) — session injected via constructor (DI)
+                   fleet, distance_matrix, planning_run) — session injected via
+                   constructor (DI)
   models/        entities.py — SQLAlchemy models: Store, Terminal, Product, Inventory,
-                 DemandHistory, Fleet, Shipment, DistanceMatrix
+                 DemandHistory, Fleet, Shipment, DistanceMatrix, PlanningRun (audit
+                 trail - see "Planning-run persistence" below)
   schemas/       Pydantic Create/Read schemas, one module per entity, plus planning.py
-                 (PlanningRequest, MasterDataSnapshot), forecast.py (DemandForecastPoint,
-                 DemandForecastResult, StoreProductRef), inventory_analysis.py
+                 (PlanningRequest incl. scope_key(), MasterDataSnapshot), forecast.py
+                 (DemandForecastPoint, DemandForecastResult, StoreProductRef),
+                 inventory_analysis.py
                  (InventoryAnalysisRecord, InventoryAnalysisResult), supply_planning.py
                  (CandidatePlan, SupplyPlanningResult), allocation.py (AllocationLine,
                  AllocationScenario, AllocationResult), cost_optimization.py (CostedLine,
                  ScenarioCostSummary, CostOptimizationResult), constraint_validation.py
                  (ConstraintViolation, ScenarioValidation, ConstraintValidationResult),
-                 decision_review.py (ScenarioEvaluation, DecisionReviewResult), and
+                 decision_review.py (ScenarioEvaluation, DecisionReviewResult),
                  final_recommendation.py (ShipmentPlanLine, InventoryProjection,
-                 AlternativeRecommendation, FinalRecommendation)
+                 AlternativeRecommendation, FinalRecommendation), and planning_run.py
+                 (PlanningRunSummary, PlanningRunRead incl. to_state_dict())
   services/      master_data_service.py — orchestrates repositories into a snapshot
   agents/        state.py (LangGraph state), master_data_agent.py, demand_forecast_agent.py,
                  inventory_analysis_agent.py, supply_planning_agent.py, allocation_agent.py,
@@ -35,7 +39,8 @@ app/
                  Phase 2's Route Planning Agent is the next likely occupant
   forecast/      chronos_forecaster.py — HuggingFace Chronos pipeline wrapper
 config/          business_rules.yaml — editable business rules (no DB table for these)
-alembic/         env.py (async-aware), versions/0001_initial_schema.py
+alembic/         env.py (async-aware), versions/0001_initial_schema.py,
+                 versions/0002_planning_runs.py
 scripts/         seed_data.py, run_planning_workflow.py
 tests/           conftest.py (also defines requires_llm_configured, shared by every
                  LLM-calling test file) + test_config, test_models, test_health_api,
@@ -479,6 +484,38 @@ dashboard's real floor) can't both be satisfied in one environment. Since
 that import path) — the dashboard doesn't need FastAPI installed at all. Its own
 `requirements-ui.txt` lists the actual runtime dependencies directly rather than
 chaining `-r requirements.txt`, letting `pip` resolve a modern starlette freely.
+
+## Planning-run persistence & audit trail
+
+Every `run_planning_workflow()` invocation is persisted as a `PlanningRun` row
+(`app/models/entities.py`) — full traceability/accountability for which reasoning
+engine produced a plan, the exact input scope, every intermediate stage's real output,
+and a success/failure status. This was previously fully in-memory: the result was
+rendered once (CLI script or Streamlit) and thrown away.
+
+- **Scope matching**: `PlanningRequest.scope_key()` (`app/schemas/planning.py`) hashes a
+  canonical JSON of the sorted scope (store/product ids, window, `planning_date`) with
+  SHA-256, stored in `PlanningRun.scope_key` and compared via plain string equality.
+  This is deliberate, not incidental: comparing JSON columns directly for equality is
+  broken on Postgres (`json` has no `=` operator - only `jsonb` does, and generic
+  `sqlalchemy.JSON` doesn't map there) and fragile on SQLite (byte-identical only as
+  long as serialization settings never change). A string-hash column sidesteps both.
+- **Persistence hook**: `app/agents/graph.py::run_planning_workflow` wraps
+  `graph.ainvoke(...)` in try/except - on success, every stage's `.model_dump(mode="json")`
+  is stored; on failure, only scope/provider/error (no checkpointer is configured, so a
+  mid-run exception leaves no partial state to persist - see the function's docstring).
+  The write itself is wrapped in its own try/except that only logs a warning - a DB
+  hiccup must never crash or mask the actual planning result. Return value is
+  byte-identical to before this feature, so no caller needed to change.
+- **Reconstruction**: `PlanningRunRead.to_state_dict()` (`app/schemas/planning_run.py`)
+  rebuilds a dict shaped exactly like `PlanningState` from the stored JSON columns, so
+  `streamlit_app.py`'s render functions work unchanged on a historical run - they don't
+  know or care whether the data came from a live run or the database.
+- **Streamlit UI**: picking a scope with existing history shows those runs in the
+  sidebar (any engine); selecting one is a pure read (no LLM call). "Run" always forces
+  a fresh computation regardless. A "Run history (all scopes)" expander browses beyond
+  the current selection. A caption always states whether the results on screen are live
+  or a specific historical run.
 
 ## CI
 

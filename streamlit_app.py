@@ -12,6 +12,7 @@ configured database (see README.md for seeding sample data first).
 """
 
 import asyncio
+import datetime
 import sys
 from pathlib import Path
 
@@ -22,10 +23,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.agents.graph import run_planning_workflow  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
-from app.core.llm import reset_llm_client_caches  # noqa: E402
-from app.database.repositories import ProductRepository, StoreRepository, TerminalRepository  # noqa: E402
+from app.core.llm import get_active_model_name, reset_llm_client_caches  # noqa: E402
+from app.database.repositories import (  # noqa: E402
+    PlanningRunRepository,
+    ProductRepository,
+    StoreRepository,
+    TerminalRepository,
+)
 from app.database.session import AsyncSessionLocal, engine  # noqa: E402
+from app.models.entities import PlanningRunStatus  # noqa: E402
 from app.schemas.planning import PlanningRequest  # noqa: E402
+from app.schemas.planning_run import PlanningRunRead  # noqa: E402
 
 st.set_page_config(page_title="Supply Chain Planning Demo", layout="wide")
 
@@ -74,6 +82,45 @@ def load_scope_options():
 
 def run_workflow(request: PlanningRequest) -> dict:
     return _run_async(run_planning_workflow(request))
+
+
+def find_matching_runs(request: PlanningRequest) -> list[PlanningRunRead]:
+    """Past runs for this exact scope (any engine), most recent first.
+
+    Not cached (unlike `load_scope_options`) so a run just triggered from this
+    same session shows up immediately, rather than waiting out a TTL.
+    """
+
+    async def _find():
+        async with AsyncSessionLocal() as session:
+            runs = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
+            return [PlanningRunRead.model_validate(r) for r in runs]
+
+    return _run_async(_find())
+
+
+def list_recent_runs(limit: int = 20) -> list[PlanningRunRead]:
+    """Past runs across every scope, most recent first."""
+
+    async def _list():
+        async with AsyncSessionLocal() as session:
+            runs = await PlanningRunRepository(session).list_recent(limit=limit)
+            return [PlanningRunRead.model_validate(r) for r in runs]
+
+    return _run_async(_list())
+
+
+def _load_run_into_session(run: PlanningRunRead) -> None:
+    """Populates session state from a historical run - a pure read, no LLM/DB-write
+    side effects. A failed run has no stage data to render (see `PlanningRun`'s
+    docstring), so it's surfaced the same way a live failure is."""
+    if run.status == PlanningRunStatus.FAILED:
+        st.session_state["result"] = None
+        st.session_state["error"] = run.error_message or "This run failed (no error message recorded)."
+    else:
+        st.session_state["result"] = run.to_state_dict()
+        st.session_state["error"] = None
+    st.session_state["result_source"] = ("historical", run.id, run.created_at, run.llm_provider, run.llm_model)
 
 
 def _df(models: list) -> pd.DataFrame:
@@ -264,9 +311,17 @@ def main() -> None:
         st.sidebar.markdown(f"Model: `{settings.groq_model}`")
         if not settings.groq_api_key:
             st.sidebar.error("GROQ_API_KEY not set — LLM-calling nodes will fail.")
+    elif settings.llm_provider == "gemini":
+        st.sidebar.markdown(f"Model: `{settings.gemini_model}`")
+        if not settings.gemini_api_key:
+            st.sidebar.error("GEMINI_API_KEY not set — LLM-calling nodes will fail.")
+        st.sidebar.caption(
+            "Gemini's free tier caps Flash models at 5 requests/minute - fine for a single "
+            "shortage, tight for a scope with several."
+        )
     else:
         st.sidebar.markdown(f"Model: `{settings.ollama_model}` @ `{settings.ollama_base_url}`")
-        st.sidebar.caption("Local inference is slower than Groq - expect several minutes per run.")
+        st.sidebar.caption("Local inference is slower than Groq/Gemini - expect several minutes per run.")
 
     try:
         store_options, product_options, terminal_count = load_scope_options()
@@ -289,18 +344,67 @@ def main() -> None:
 
     st.sidebar.caption(f"{len(store_options)} stores, {len(product_options)} products, {terminal_count} terminals available.")
 
-    if st.sidebar.button("▶ Run planning workflow", type="primary"):
-        request = PlanningRequest(
-            store_ids=[store_labels[label] for label in selected_stores] or None,
-            product_ids=[product_labels[label] for label in selected_products] or None,
-            demand_history_window_days=int(window_days),
+    current_request = PlanningRequest(
+        store_ids=[store_labels[label] for label in selected_stores] or None,
+        product_ids=[product_labels[label] for label in selected_products] or None,
+        demand_history_window_days=int(window_days),
+    )
+
+    # Traceability: surface any prior run for this exact scope (any engine) so the
+    # user can view it instantly instead of blindly re-running an expensive/
+    # rate-limited LLM pipeline. This is a pure read - no LLM/DB-write side effects -
+    # so it's safe to do on every rerun; "▶ Run planning workflow" below still always
+    # forces a fresh computation regardless of what's already there.
+    try:
+        matching_runs = find_matching_runs(current_request)
+    except Exception:
+        matching_runs = []
+
+    if matching_runs:
+        st.sidebar.markdown(f"**{len(matching_runs)} previous run(s) for this exact scope:**")
+        run_options = {
+            f"#{r.id} · {r.created_at:%Y-%m-%d %H:%M} · {r.llm_model} · {r.status.value}": r
+            for r in matching_runs
+        }
+        chosen_label = st.sidebar.selectbox(
+            "View a previous run", ["(select one)"] + list(run_options.keys()), key="matching_run_select"
         )
+        if chosen_label != "(select one)":
+            _load_run_into_session(run_options[chosen_label])
+
+    with st.sidebar.expander("🕘 Run history (all scopes)"):
+        try:
+            recent_runs = list_recent_runs(limit=20)
+        except Exception:
+            recent_runs = []
+        if recent_runs:
+            recent_options = {
+                f"#{r.id} · {r.created_at:%Y-%m-%d %H:%M} · scope="
+                f"{r.store_ids or 'all'}/{r.product_ids or 'all'} · {r.llm_model} · {r.status.value}": r
+                for r in recent_runs
+            }
+            chosen_recent_label = st.selectbox(
+                "View any recent run", ["(select one)"] + list(recent_options.keys()), key="recent_run_select"
+            )
+            if chosen_recent_label != "(select one)":
+                _load_run_into_session(recent_options[chosen_recent_label])
+        else:
+            st.caption("No runs yet.")
+
+    if st.sidebar.button("▶ Run planning workflow", type="primary"):
         with st.spinner(
             "Running the 9-node planning pipeline... this can take a few minutes with a local Ollama model."
         ):
             try:
-                st.session_state["result"] = run_workflow(request)
+                st.session_state["result"] = run_workflow(current_request)
                 st.session_state["error"] = None
+                st.session_state["result_source"] = (
+                    "live",
+                    None,
+                    datetime.datetime.now(),
+                    settings.llm_provider,
+                    get_active_model_name(),
+                )
             except Exception as exc:
                 st.session_state["result"] = None
                 st.session_state["error"] = str(exc)
@@ -310,8 +414,20 @@ def main() -> None:
 
     result = st.session_state.get("result")
     if result is None:
-        st.info("Configure the scope in the sidebar and click **Run planning workflow** to begin.")
+        if not st.session_state.get("error"):
+            st.info(
+                "Configure the scope in the sidebar and click **Run planning workflow** to begin, "
+                "or pick a previous run above."
+            )
         return
+
+    source = st.session_state.get("result_source")
+    if source:
+        kind, run_id, ts, _provider, model = source
+        if kind == "historical":
+            st.caption(f"📜 Viewing historical run #{run_id} — {ts:%Y-%m-%d %H:%M} — via {model}")
+        else:
+            st.caption(f"🟢 Live run just now — via {model}")
 
     st.subheader("Trace")
     st.code("\n".join(f"- {line}" for line in result["trace"]), language=None)

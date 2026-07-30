@@ -85,6 +85,7 @@ async def committed_db():
         DistanceMatrix,
         Fleet,
         Inventory,
+        PlanningRun,
         Product,
         Shipment,
         Store,
@@ -94,6 +95,16 @@ async def committed_db():
     yield AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
-        for model in (Shipment, DistanceMatrix, DemandHistory, Inventory, Fleet, Product, Terminal, Store):
+        for model in (
+            PlanningRun,
+            Shipment,
+            DistanceMatrix,
+            DemandHistory,
+            Inventory,
+            Fleet,
+            Product,
+            Terminal,
+            Store,
+        ):
             await session.execute(delete(model))
         await session.commit()

@@ -233,6 +233,34 @@ alternatives). A workflow failure (e.g. Groq quota exhausted) is caught and show
 error banner rather than crashing the app — switch `LLM_PROVIDER=ollama` in `.env` and
 rerun if that happens.
 
+### 8a. Run history and traceability
+
+Every call to `run_planning_workflow` — from this dashboard, the CLI script, or a test —
+is persisted as a `planning_runs` row: the full input scope, which reasoning engine/model
+produced it, a success/failure status (with the error message on failure), and every
+intermediate stage's real output. This is unconditional and automatic, not something you
+opt into — it exists so an AI-generated plan can always be traced back to exactly what
+produced it (which is standard practice for auditable AI-decision systems, not unique to
+this project).
+
+The dashboard surfaces this two ways:
+- **Pick a scope that's already been run** (same stores/products/window/date, any
+  engine) and a "N previous run(s) for this exact scope" panel appears in the sidebar —
+  select one to view its 3 tabs instantly, with **no LLM call made**. "▶ Run planning
+  workflow" still always forces a fresh computation, e.g. to compare a different engine
+  against the same scope.
+- **🕘 Run history (all scopes)** in the sidebar browses the last 20 runs regardless of
+  scope.
+
+A caption at the top of the results area always says whether you're looking at a live
+run or a specific historical one (with its timestamp and model). Selecting a *failed*
+historical run shows its error message the same way a live failure would — there's no
+stage data to render for a run that didn't complete.
+
+Note: `Settings` is cached per-process, so switching `LLM_PROVIDER` in `.env` requires
+restarting the Streamlit process — an already-running dashboard won't pick up the change
+just from re-clicking around.
+
 ## 9. (Optional) Switch to Postgres via Docker
 
 If you have Docker installed:

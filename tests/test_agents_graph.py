@@ -6,16 +6,19 @@ from app.agents.demand_forecast_agent import forecast_demand_node
 from app.agents.graph import build_graph, run_planning_workflow
 from app.agents.master_data_agent import load_master_data_node
 from app.core.config import get_settings
+from app.database.repositories import PlanningRunRepository
 from app.models.entities import (
     DemandHistory,
     DistanceMatrix,
     Inventory,
     LocationType,
+    PlanningRunStatus,
     Product,
     Store,
     Terminal,
 )
 from app.schemas.planning import PlanningRequest
+from app.schemas.planning_run import PlanningRunRead
 from tests.conftest import requires_llm_configured as requires_groq_key
 
 
@@ -298,3 +301,56 @@ async def test_replanning_loop_fires_and_gives_up_after_max_attempts(committed_d
     assert final.fell_back_to_invalid_scenario is True
     assert final.unresolved_shortages_count == len(result["supply_planning"].unresolved_shortages)
     assert final.shipment_plan
+
+
+@pytest.mark.asyncio
+async def test_run_planning_workflow_persists_a_success_row(committed_db):
+    # No-shortage scope, same as test_run_planning_workflow_end_to_end_no_shortage -
+    # needs no API key, since the point here is verifying persistence, not any
+    # particular LLM-calling agent's behavior.
+    await _seed_minimal(committed_db, with_demand_history=True, store_available_qty=50)
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    result = await run_planning_workflow(request)
+
+    async with committed_db() as session:
+        rows = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
+
+    assert len(rows) == 1
+    run = PlanningRunRead.model_validate(rows[0])
+    assert run.status == PlanningRunStatus.SUCCESS
+    assert run.error_message is None
+    assert run.llm_provider == get_settings().llm_provider
+    assert run.master_data_snapshot is not None
+    assert run.final_recommendation is not None
+    assert run.trace == result["trace"]
+
+    # The reconstructed state dict matches what a live run returned - proves the
+    # round-trip through JSON is lossless for the fields the Streamlit UI renders.
+    reconstructed = run.to_state_dict()
+    assert len(reconstructed["master_data"].stores) == len(result["master_data"].stores)
+    assert reconstructed["final_recommendation"].selected_strategy == result["final_recommendation"].selected_strategy
+
+
+@pytest.mark.asyncio
+async def test_run_planning_workflow_persists_a_failed_row_and_still_raises(committed_db, monkeypatch):
+    await _seed_minimal(committed_db, with_demand_history=True, store_available_qty=50)
+
+    async def _boom(state):
+        raise RuntimeError("simulated node failure for persistence test")
+
+    monkeypatch.setattr("app.agents.graph.load_master_data_node", _boom)
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    with pytest.raises(RuntimeError, match="simulated node failure"):
+        await run_planning_workflow(request)
+
+    async with committed_db() as session:
+        rows = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
+
+    assert len(rows) == 1
+    run = rows[0]
+    assert run.status == PlanningRunStatus.FAILED
+    assert "simulated node failure" in run.error_message
+    assert run.master_data_snapshot is None
+    assert run.final_recommendation is None

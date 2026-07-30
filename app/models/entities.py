@@ -11,6 +11,7 @@ import enum
 from datetime import date as date_, datetime
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     Enum,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -45,6 +47,11 @@ class ShipmentStatus(str, enum.Enum):
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
     EXCEPTION = "exception"
+
+
+class PlanningRunStatus(str, enum.Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
 
 
 class TimestampMixin:
@@ -206,4 +213,61 @@ class DistanceMatrix(Base):
         CheckConstraint("distance_km >= 0", name="ck_distance_non_negative"),
         CheckConstraint("travel_time >= 0", name="ck_travel_time_non_negative"),
         Index("ix_distance_matrix_store", "store_id"),
+    )
+
+
+class PlanningRun(TimestampMixin, Base):
+    """One row per `run_planning_workflow()` invocation - the audit trail for
+    every AI-generated plan: which reasoning engine produced it, the full
+    input scope, every intermediate LangGraph stage's output, and a
+    success/failure status. Written by the persistence hook in
+    `app/agents/graph.py`, not by any repository (repositories never commit
+    in this codebase - see `BaseRepository`).
+
+    Stage columns are nullable because a *failed* run has no partial data to
+    store: `graph.compile()` has no checkpointer configured, so when a node
+    raises, the exception propagates straight out of `graph.ainvoke()` with
+    no partial state returned - a failed row only ever gets scope/provider/error.
+    """
+
+    __tablename__ = "planning_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    planning_date: Mapped[date_] = mapped_column(nullable=False)
+    store_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    product_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    demand_history_window_days: Mapped[int] = mapped_column(nullable=False)
+    # SHA-256 of a canonical JSON scope (sorted store/product ids + window + date) -
+    # used for exact-match "has this scope already been run?" lookups instead of
+    # comparing JSON columns directly (unreliable across dialects - see graph.py).
+    scope_key: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    llm_provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    llm_model: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    status: Mapped[PlanningRunStatus] = mapped_column(
+        Enum(PlanningRunStatus, name="planning_run_status_enum"), nullable=False
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    trace: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    errors: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    replanning_attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    request_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    master_data_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    demand_forecast: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    inventory_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    supply_planning: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    allocation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    cost_optimization: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    constraint_validation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    decision_review: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    final_recommendation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_planning_runs_scope_key", "scope_key"),
+        Index("ix_planning_runs_created_at", "created_at"),
     )
