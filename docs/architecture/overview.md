@@ -96,24 +96,31 @@ a fixed URL in `alembic.ini`), so `alembic upgrade head` works unmodified
 against either backend. See {doc}`../operations/deployment` for the
 production checklist.
 
-## What Phase 1 covers vs. what's still open
+## What's built vs. what's still open
 
-**Built (Phase 1, all nine agents):** Master Data → Demand Forecast →
-Inventory Analysis → Supply Planning → Allocation → Cost Optimization →
-Constraint Validation (with a replanning feedback loop) → Decision Review →
-Final Recommendation. See {doc}`planning-workflow` for the full graph and
+**Built (all 13 agents in the original spec):** Master Data → Demand
+Forecast → Inventory Analysis → Supply Planning → Allocation → Cost
+Optimization → Constraint Validation (with a replanning feedback loop) →
+**[optional] Fleet Assignment → Route Planning → ETA Prediction** →
+Decision Review → Final Recommendation. The bracketed Phase 2 stage is
+gated behind `Settings.fleet_module_enabled` (default `False`, reproducing
+the original 9-node graph unchanged; `True` adds those 3 nodes and starts
+writing real `Shipment` rows with vehicle assignments). See
+{doc}`planning-workflow` for the full graph (both shapes) and
 {doc}`../agents/overview` for each agent's individual page.
 
-**Not yet built (Phase 2 and known gaps):**
+**Not yet built (known gaps):**
 
-- Fleet Assignment, Route Planning, and ETA Prediction/Exception Handling
-  agents — gated behind `Settings.fleet_module_enabled`, not started.
 - The `/forecast`, `/inventory` (POST), `/fleet/assign`, `/route/optimize`,
-  `/simulate`, `/shipments` REST endpoints (`/optimize` and the
-  `/planning-runs` audit endpoints are built — see {doc}`../interfaces/rest-api`
-  for what's implemented and why the rest isn't yet).
+  `/simulate` REST endpoints (`/optimize` and the `/planning-runs` audit
+  endpoints are built — see {doc}`../interfaces/rest-api` for what's
+  implemented and why the rest isn't yet; `/shipments` rows are written
+  automatically by Phase 2 but have no dedicated read endpoint yet).
 - A forward-looking promotions/holiday calendar for demand forecasting (no
   data source exists in the model — see {doc}`../agents/demand-forecast-agent`).
 - Two of the original spec's nine listed constraints (`safety_stock` as a
   separate check, `product_restrictions`) — no distinct real data to check
   them against; see {doc}`../agents/constraint-validation-agent`.
+- **No authentication** on the REST API or Streamlit dashboard, and CORS
+  defaults to `["*"]` — see {doc}`../operations/deployment`'s production
+  checklist before exposing either beyond an internal/trusted network.

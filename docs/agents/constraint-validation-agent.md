@@ -22,8 +22,14 @@ Evaluated after validating all three scenarios (`validate_constraints_node`):
    `replanning_attempts`.
 4. None are valid and attempts are exhausted → proceed best-effort with
    the recommended scenario, append the unresolved violations to
-   `state["errors"]`, and set them on the result for a future Exception
-   Handling agent (Phase 2, not yet built) to pick up.
+   `state["errors"]`. `state["replanning_attempts"]` (incremented each time
+   step 3 fired) is left at its final count, greater than zero whenever this
+   run needed at least one replanning attempt. When Phase 2 is enabled,
+   {doc}`eta-prediction-agent` reads that counter as one of its three
+   at-risk signals — a scenario whose run needed replanning at least once is
+   flagged for closer monitoring, the "Exception Handling" concept from the
+   original spec folded into ETA Prediction's real risk flagging rather than
+   a separate fifth LLM call.
 
 ## Closing the loop
 

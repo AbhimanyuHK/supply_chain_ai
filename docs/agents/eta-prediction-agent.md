@@ -26,7 +26,7 @@ flagged `at_risk` if any of these fire:
 |---|---|
 | Predicted ETA exceeds `business_rules.max_lead_time_days * 24` | {doc}`constraint-validation-agent` only ever checked a single leg's time — a stop late in a multi-drop route can breach this hard cap in a way Constraint Validation had no way to see, since routing didn't exist yet when it ran. |
 | The assigned vehicle was flagged `vehicle_capacity_exceeded` by {doc}`cost-optimization-agent` | Matched by `vehicle_id` — an approximate signal, since Cost Optimization's `vehicle_id` is a per-line costing proxy that may legitimately differ from {doc}`fleet-assignment-agent`'s real, binding assignment. Still a real, meaningful correlation worth flagging. |
-| This scenario needed at least one replanning attempt (`constraint_validation.replanning_triggered`) | Already borderline once — a genuine prior signal, not invented. |
+| This run needed at least one replanning attempt (`state["replanning_attempts"] > 0`) | Already borderline once — a genuine prior signal, not invented. Deliberately reads the run-level counter, not `constraint_validation.replanning_triggered` — that field is only ever `True` on the validation call that decides to loop back, and {doc}`constraint-validation-agent`'s `route_after_validation` only proceeds to this node when it's `False`, so it would never fire from here. |
 
 Each flagged stop gets a short, deterministic `suggested_contingency`
 string keyed off whichever reason fired (e.g. "Split shipment across an

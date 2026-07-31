@@ -27,8 +27,14 @@ narrative/contingency actions, rather than adding a competing 5th call here.
   signal, since Cost Optimization's `vehicle_id` is a per-line costing
   proxy that may legitimately differ from Fleet Assignment's real, binding
   assignment; still a real, meaningful correlation worth flagging).
-- This scenario needed at least one replanning attempt
-  (`constraint_validation.replanning_triggered`) - already borderline once.
+- This run needed at least one replanning attempt (`state["replanning_attempts"]
+  > 0`) - already borderline once. Deliberately NOT
+  `constraint_validation.replanning_triggered`: that field is only ever `True`
+  on the validate_constraints_node call that decides to loop back to Supply
+  Planning (`route_after_validation` routes there precisely when it's `True`),
+  so by construction it is always `False` on whichever call's result actually
+  reaches this node - `replanning_attempts` is the field that survives the
+  loop and reflects the run's real history.
 """
 
 from loguru import logger
@@ -126,7 +132,7 @@ async def predict_eta_node(state: PlanningState) -> dict:
 
     business_rules = state["master_data"].business_rules
     cost_optimization = state["cost_optimization"]
-    replanning_triggered = state["constraint_validation"].replanning_triggered
+    replanning_triggered = state.get("replanning_attempts", 0) > 0
 
     scenario_predictions = [
         _predict_scenario(scenario_route, business_rules, cost_optimization, replanning_triggered)

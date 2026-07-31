@@ -92,11 +92,11 @@ Introduced to keep the pipeline usable at scale — see
 | `DECISION_REVIEW_CRITICAL_STOCK_THRESHOLD` | `0.1` | Fraction of pre-shipment stock below which a (terminal, product) counts as a future-inventory risk. |
 | `PERSIST_FULL_MASTER_DATA_SNAPSHOT` | `true` | Set `false` at real scale to store only row counts, not the full input snapshot, per `PlanningRun`. See {doc}`../features/scalability`. |
 
-## Phase 2 (not yet built)
+## Phase 2 (Fleet Assignment / Route Planning / ETA Prediction)
 
 | Variable | Default | Notes |
 |---|---|---|
-| `FLEET_MODULE_ENABLED` | `false` | Gates the not-yet-built Fleet Assignment/Route Planning/ETA Prediction agents. |
+| `FLEET_MODULE_ENABLED` | `false` | Adds 3 nodes to the graph between Constraint Validation and Decision Review, and starts writing real `Shipment` rows with vehicle assignments on every successful run. Default `false` reproduces the original 9-node Phase 1 graph unchanged. |
 
 ## Per-run options that are *not* environment variables
 

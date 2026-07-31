@@ -10,18 +10,22 @@ engines. See the full documentation site under [`docs/`](docs/index.md) (build i
 with `sphinx-build`, or host it on Read the Docs) for the module layout, every agent's
 design decisions, and operational guidance.
 
-> **Status: all 10 Phase 1 agents are built** (Modules 1-10) — every agent in the spec's
-> 13-agent list except Phase 2's Fleet Assignment/Route Planning/ETA Prediction/Exception
-> Handling. The LangGraph workflow runs Master Data → Demand Forecast (real HuggingFace
-> Chronos) → Inventory Analysis → Supply Planning (Groq) → Allocation (Groq) → Cost
-> Optimization (real fleet-based costing) → Constraint Validation (rejects invalid plans,
-> loops back to Supply Planning for replanning) → Decision Review (Groq) → Final
-> Recommendation (Groq) end to end, producing a full shipment plan with business
-> explanation, risk assessment, alternatives, confidence score, and expected
-> inventory/service level. Every Groq call can be swapped for a local Ollama model with
-> one `.env` change (step 3a). See the "Current status" section at the bottom for exactly
-> what's built vs. still open (Phase 2, some REST endpoints, a couple of explicitly
-> out-of-scope constraints).
+> **Status: all 13 agents in the original spec are built** (Phase 1's 10 + Phase 2's Fleet
+> Assignment/Route Planning/ETA Prediction), tagged `v1.2.0`. The LangGraph workflow runs
+> Master Data → Demand Forecast (real HuggingFace Chronos) → Inventory Analysis → Supply
+> Planning (Groq) → Allocation (Groq) → Cost Optimization (real fleet-based costing) →
+> Constraint Validation (rejects invalid plans, loops back to Supply Planning for
+> replanning) → **[optional] Fleet Assignment → Route Planning → ETA Prediction** →
+> Decision Review (Groq) → Final Recommendation (Groq) end to end, producing a full
+> shipment plan with business explanation, risk assessment, alternatives, confidence
+> score, and expected inventory/service level. The bracketed Phase 2 stage is gated behind
+> `FLEET_MODULE_ENABLED` (default `false`, reproducing the original 9-node graph
+> byte-for-byte; `true` adds those 3 nodes and starts writing real `Shipment` rows with
+> vehicle assignments — see step 3). Every Groq call can be swapped for a local Ollama
+> model with one `.env` change (step 3a). See the "Current status" section at the bottom
+> for exactly what's built vs. still open (a handful of REST endpoints, a couple of
+> explicitly out-of-scope constraints) — and note the **no-authentication** gap called out
+> there before using this for anything beyond an internal/trusted-network demo.
 
 ---
 
@@ -46,6 +50,13 @@ venv\Scripts\python.exe -m pip install --upgrade pip
 venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
+`requirements-dev.txt` includes `ruff` (pinned), the lint tool CI enforces as a
+hard-blocking job (step 11). Run it locally the same way CI does:
+
+```bash
+venv\Scripts\python.exe -m ruff check .
+```
+
 ## 3. Configure environment variables
 
 A `.env` is already present, pointed at local SQLite:
@@ -58,6 +69,11 @@ FLEET_MODULE_ENABLED=false
 
 See [`.env.example`](.env.example) for every available setting, including the
 `postgresql+asyncpg://...` URL to use once you switch to Docker/Postgres (step 7).
+
+`FLEET_MODULE_ENABLED=true` turns on Phase 2 (Fleet Assignment/Route Planning/ETA
+Prediction) — adds 3 nodes to the graph between Constraint Validation and Decision
+Review, and starts writing real `Shipment` rows with vehicle assignments on every
+successful run. Default `false` reproduces the original 9-node Phase 1 graph unchanged.
 
 **You need a real `GROQ_API_KEY` starting with Module 5** (Supply Planning Agent) — it's
 the first node that calls an LLM. Modules 6, 9, and 10 (Allocation, Decision Review, Final
@@ -148,18 +164,19 @@ venv\Scripts\python.exe scripts\seed_data.py
 Safe to re-run — it wipes and re-inserts these 8 tables' rows each time (deterministic,
 seeded random data, so the numbers are the same every run).
 
-## 6. Run the planning workflow (Modules 2-10, full Phase 1 pipeline)
+## 6. Run the planning workflow (full pipeline)
 
 Runs the complete LangGraph workflow — load master data, forecast demand with Chronos,
 analyze inventory (safety stock / reorder point / shortages), plan supply for any
 shortages via Groq, build and rank allocation scenarios via a second Groq call, recompute
 real fleet-based costs for each scenario (no Groq call), validate all three scenarios
 against real constraints (looping back to Supply Planning, with the actual violation
-reasons, if none pass), holistically score every *valid* scenario via a third Groq call,
-then synthesize a final recommendation via a fourth Groq call — and prints a snapshot
-summary, a forecast sample, shortages found, ranked candidate shipment plans, ranked
-allocation scenarios, a real cost breakdown, each scenario's validation status, the
-multi-dimension-scored selection, and the final recommendation (shipment plan with
+reasons, if none pass), optionally assign fleet/plan routes/predict ETA risk (Phase 2,
+if `FLEET_MODULE_ENABLED=true`), holistically score every *valid* scenario via a third
+Groq call, then synthesize a final recommendation via a fourth Groq call — and prints a
+snapshot summary, a forecast sample, shortages found, ranked candidate shipment plans,
+ranked allocation scenarios, a real cost breakdown, each scenario's validation status,
+the multi-dimension-scored selection, and the final recommendation (shipment plan with
 per-line explanations, business explanation, risk assessment, contingency actions,
 confidence score, expected inventory after shipment, and alternatives):
 
@@ -301,21 +318,25 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/supply_chain
 venv\Scripts\python.exe -m pytest -v
 ```
 
-85 tests covering config loading, ORM model CRUD + constraint enforcement, the `/health`
-endpoint, the repository layer, `MasterDataService` scoping, the Chronos forecaster
-wrapper, inventory analysis math (safety stock/reorder point/shortage, store-vs-terminal
-scoping), Supply Planning candidate generation, Allocation's three strategies (including a
-deliberately scarce-stock scenario that forces them to genuinely diverge), Cost
-Optimization's vehicle selection/costing math (including a deliberately-wrong allocation
-cost estimate to prove it gets recomputed, not trusted), Constraint Validation's checks
-(one deliberate violation per constraint) and its replanning decision tree, an end-to-end
-test that forces every scenario to fail validation and confirms the graph loops back to
-Supply Planning exactly `max_replanning_attempts + 1` times before giving up, Decision
-Review's evaluation math and its "only review valid scenarios" rule, Final
-Recommendation's shipment-plan/expected-inventory/alternatives construction (each its own
-testable function, independent of the Groq synthesis call), and other end-to-end LangGraph
-runs — all against a real (SQLite) database, the real Chronos model, and (where relevant)
-real Groq calls, nothing is mocked.
+127 tests covering config loading, ORM model CRUD + constraint enforcement, the `/health`
+endpoint, the REST API (`/optimize`, `/planning-runs`), the repository layer,
+`MasterDataService` scoping, the Chronos forecaster wrapper, inventory analysis math
+(safety stock/reorder point/shortage, store-vs-terminal scoping), Supply Planning
+candidate generation, Allocation's three strategies (including a deliberately
+scarce-stock scenario that forces them to genuinely diverge), Cost Optimization's vehicle
+selection/costing math (including a deliberately-wrong allocation cost estimate to prove
+it gets recomputed, not trusted), Constraint Validation's checks (one deliberate
+violation per constraint) and its replanning decision tree, an end-to-end test that
+forces every scenario to fail validation and confirms the graph loops back to Supply
+Planning exactly `max_replanning_attempts + 1` times before giving up, Decision Review's
+evaluation math and its "only review valid scenarios" rule, Final Recommendation's
+shipment-plan/expected-inventory/alternatives construction (each its own testable
+function, independent of the Groq synthesis call), Phase 2's Fleet Assignment/Route
+Planning/ETA Prediction agents (bin-packing, route sequencing, risk-flagging, all
+deterministic, zero LLM calls) with both the flag-off (9-node) and flag-on (12-node,
+real `Shipment` row writes) graph shapes, and other end-to-end LangGraph runs — all
+against a real (SQLite) database, the real Chronos model, and (where relevant) real Groq
+calls, nothing is mocked.
 
 **Tests that call an LLM are automatically skipped unless a reasoning engine is actually
 configured** (`tests/conftest.py::requires_llm_configured` — true when `GROQ_API_KEY` or
@@ -323,7 +344,7 @@ configured** (`tests/conftest.py::requires_llm_configured` — true when `GROQ_A
 full suite still runs with none of those — you'll just see a handful of `SKIPPED`
 instead of `PASSED`. Set `LLM_PROVIDER=gemini`/`ollama` to have those same tests exercise
 that engine instead of Groq — this is exactly how CI's Gemini/Ollama jobs (see below) get
-real coverage without a Groq key. With a key set and quota available, all 85 run for real
+real coverage without a Groq key. With a key set and quota available, all 127 run for real
 against Groq, though running the full suite repeatedly in one day can trip Groq's
 free-tier daily token cap (see the rate-limit note in step 3) — a `RateLimitError` there
 is an external quota, not a test failure; the deterministic logic each LLM-calling agent
@@ -333,10 +354,12 @@ logic. First test run pays the same one-time Chronos model download/load cost as
 
 ## 11. Continuous Integration
 
-`.github/workflows/ci.yml` runs the full pytest suite on every push/PR to `main` (and on
-manual dispatch), as three independent jobs so every supported reasoning engine gets real
-coverage:
+`.github/workflows/ci.yml` runs on every push/PR to `master` (and on manual dispatch), as
+4 jobs — a hard-blocking lint job plus three independent test jobs so every supported
+reasoning engine gets real coverage:
 
+- **Lint** — installs `requirements-dev.txt` and runs `ruff check .`; fails the build on
+  any finding (see step 2).
 - **Tests (Groq)** — installs `requirements-dev.txt` and runs `pytest` with
   `GROQ_API_KEY` from a repository secret of the same name. If the secret isn't set, the
   Groq-gated tests just skip (see step 10) — the job doesn't fail.
@@ -356,8 +379,8 @@ dependencies.
 
 ## Current status vs. the full spec
 
-**All 10 Phase 1 modules are built** — every agent in the spec's 13-agent list except
-Phase 2's fleet/route/ETA agents:
+**All 13 agents in the original spec are built** — Phase 1's 10 plus Phase 2's Fleet
+Assignment/Route Planning/ETA Prediction:
 
 - **Module 1**: clean-architecture scaffold, config/logging/error handling, all 8 core
   tables + Alembic migration, FastAPI app + `/health`, sample electronics dataset seeder
@@ -409,37 +432,60 @@ Phase 2's fleet/route/ETA agents:
   synthesis task — a business explanation, risk assessment, contingency actions, and a
   calibrated confidence score (which drops noticeably if Module 8 had to fall back to a
   constraint-violating plan) — is Groq's job, given those real metrics. Wired as the
-  graph's ninth and final node.
-- 85 passing tests (LLM-dependent ones auto-skip unless Groq or Ollama is configured; each
-  LLM-calling agent's deterministic logic has its own separately-testable, non-LLM-dependent
-  coverage)
-- A manual run script (`scripts/run_planning_workflow.py`) exercising the full 9-node
-  pipeline end to end
+  graph's ninth node when Phase 2 is off, or precedes Decision Review as the tenth when
+  it's on.
+- **Phase 2 (optional, `FLEET_MODULE_ENABLED=true`)**: three more deterministic
+  agents/nodes, no new LLM calls, inserted between Constraint Validation and Decision
+  Review:
+  - **Fleet Assignment** — bin-packs each scenario's shipment lines onto available
+    vehicles per terminal (first-fit-decreasing by weight), flagging any line that can't
+    fit any available vehicle as unassignable.
+  - **Route Planning** — orders each vehicle's stops by terminal→store distance
+    (nearest-first; no store-to-store distance data exists in this schema, so this is an
+    explicit, documented proxy for true multi-stop routing) and computes a real route
+    cost (fixed cost once per vehicle + cost-per-km × total distance).
+  - **ETA Prediction** — predicts each stop's ETA from cumulative real travel time plus a
+    variance buffer, flagging stops at risk of a lead-time breach, a vehicle capacity
+    overflow, or a replanning-triggered run, with a deterministic suggested contingency
+    per risk reason.
+  - Decision Review and Final Recommendation both fold in this real data (risk counts,
+    vehicle/route/ETA per shipment line); Final Recommendation's existing fourth Groq call
+    gets one more real signal, not a new LLM call. On every successful run (flag on), a
+    real `Shipment` row is written per shipment line with its vehicle assignment — this is
+    unconditional, not gated on any future "approval" step.
+- 127 passing tests (LLM-dependent ones auto-skip unless Groq or Ollama is configured;
+  each LLM-calling agent's deterministic logic has its own separately-testable,
+  non-LLM-dependent coverage)
+- A manual run script (`scripts/run_planning_workflow.py`) exercising the full pipeline
+  end to end, either shape
 
-**Not yet built** (Phase 2, plus a few explicitly out-of-scope gaps):
+**Not yet built** (a few explicitly out-of-scope/deferred gaps):
 
-- Phase 2's Fleet Assignment, Route Planning, and ETA Prediction/Exception Handling agents
-  and their graph nodes/edges (gated behind `Settings.fleet_module_enabled`, not started)
-- The `/forecast`, `/inventory` (POST), `/fleet/assign`, `/route/optimize`, `/simulate`,
-  `/shipments` endpoints (`/optimize` and the `/planning-runs` audit endpoints are built —
-  see `docs/interfaces/rest-api.md`)
+- The `/forecast`, `/inventory` (POST), `/fleet/assign`, `/route/optimize`, `/simulate`
+  endpoints (`/optimize` and the `/planning-runs` audit endpoints are built — see
+  `docs/interfaces/rest-api.md`; `/shipments` is populated automatically by Phase 2, not
+  exposed as its own read endpoint yet)
 - A forward-looking promotions/holiday calendar (the Demand Forecast Agent has no such
   input to work from — see `docs/agents/demand-forecast-agent.md`)
 - Two of the spec's nine listed constraints (safety stock as a separate check, product
   restrictions) are explicitly out of scope — no distinct/real data to check them against,
   see `docs/agents/constraint-validation-agent.md`
+- **No authentication anywhere** — the REST API and the Streamlit dashboard are both
+  unauthenticated, and CORS defaults to `["*"]`. Fine for an internal/trusted-network
+  demo; treat this as a hard blocker before exposing either to an untrusted network. See
+  `docs/operations/deployment.md`'s production checklist.
 
 See `docs/reference/roadmap.md` for the full, up-to-date list of what's built and what's
 next.
 
-So today you can stand up the database, seed realistic data, and run the entire Phase 1
-pipeline end to end: a scoped master-data snapshot, a real per-store/per-product demand
-forecast, a shortage report for store inventory, several real Groq-reasoned candidate
-shipment plans per shortage, three ranked allocation scenarios across all shortages at
-once, a real fleet-based cost breakdown, a constraint-validated set of scenarios (with
-automatic replanning if nothing passed), a holistically-scored final selection, and a
-complete final recommendation — shipment plan, business explanation, risk assessment,
-contingency actions, confidence score, expected inventory, expected service level, and
-alternatives. It can also be triggered over HTTP via `POST /api/v1/optimize` (see
-`docs/interfaces/rest-api.md`), not just the CLI script. What's not built is Phase 2
-(fleet/route optimization) and a few REST endpoints beyond that.
+So today you can stand up the database, seed realistic data, and run the entire pipeline
+end to end: a scoped master-data snapshot, a real per-store/per-product demand forecast,
+a shortage report for store inventory, several real Groq-reasoned candidate shipment
+plans per shortage, three ranked allocation scenarios across all shortages at once, a
+real fleet-based cost breakdown, a constraint-validated set of scenarios (with automatic
+replanning if nothing passed), optionally real vehicle assignment/route planning/ETA risk
+flagging, a holistically-scored final selection, and a complete final recommendation —
+shipment plan, business explanation, risk assessment, contingency actions, confidence
+score, expected inventory, expected service level, and alternatives. It can also be
+triggered over HTTP via `POST /api/v1/optimize` (see `docs/interfaces/rest-api.md`), not
+just the CLI script.

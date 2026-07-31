@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Final release-readiness audit, done before handing `v1.2.0` off for real
+business testing.
+
+### Fixed
+
+- **ETA Prediction's "prior replanning" risk signal could never fire.**
+  `predict_eta_node` read `constraint_validation.replanning_triggered`, but
+  `route_after_validation` only ever proceeds downstream (to Fleet
+  Assignment/ETA Prediction/Decision Review) when that field is `False` — it
+  is only `True` on the validation call that decides to loop back to Supply
+  Planning instead. One of ETA Prediction's three documented at-risk
+  triggers was structurally unreachable in every real run, verified only by
+  test fixtures that bypassed the graph's actual routing invariant. Now
+  reads the run-level `state["replanning_attempts"] > 0` counter instead,
+  which correctly persists across the replanning loop. See
+  `app/agents/eta_prediction_agent.py` and
+  {doc}`docs/agents/eta-prediction-agent`.
+- **Test suite depended on the developer's local `.env`.** `tests/conftest.py`
+  pinned `DATABASE_URL`/`APP_ENV` so tests never read local dev settings, but
+  never did the same for `FLEET_MODULE_ENABLED` — so the suite's expected
+  9-node-graph assertions silently depended on whatever that flag happened
+  to be set to locally. Now pinned to `false` alongside the other two.
+
+### Documentation
+
+- Corrected several stale claims that lagged behind Phase 2 shipping:
+  README's status banner, test count (85 → 127), CI branch (`main` →
+  `master`) and job count (3 → 4, missing the lint job), and "not yet built"
+  language for Phase 2/ruff; `docs/interfaces/rest-api.md`'s claim that
+  Fleet Assignment/Route Planning "don't exist yet" and that `/shipments`
+  writes are gated on an "approval" workflow that was never built (they
+  auto-write, unconditionally, since `v1.2.0`); `docs/architecture/overview.md`'s
+  "Phase 2 not yet built" section; `docs/getting-started/configuration.md`'s
+  `FLEET_MODULE_ENABLED` row.
+- Documented the pre-existing, deliberate **no-authentication** gap (REST
+  API and Streamlit both unauthenticated, CORS defaults to `["*"]`) more
+  prominently in the README's status banner — this was already correctly
+  called out in `docs/reference/roadmap.md` and
+  `docs/operations/deployment.md`'s production checklist, but is easy to
+  miss on a first read of just the README.
+
 ## [1.2.0] - 2026-07-31
 
 Phase 2 complete: all three of the original spec's remaining agents, gated

@@ -37,10 +37,10 @@ def _cost_optimization(vehicle_id, vehicle_capacity_exceeded) -> CostOptimizatio
     )
 
 
-def _constraint_validation(replanning_triggered=False) -> ConstraintValidationResult:
+def _constraint_validation() -> ConstraintValidationResult:
     return ConstraintValidationResult(
         scenario_validations=[], final_strategy="priority_first", unresolved_violations=[],
-        replanning_triggered=replanning_triggered,
+        replanning_triggered=False,
     )
 
 
@@ -61,12 +61,13 @@ def _route_planning(travel_time_hours) -> RoutePlanningResult:
     )
 
 
-def _state(route_planning, cost_optimization, constraint_validation):
+def _state(route_planning, cost_optimization, constraint_validation, replanning_attempts=0):
     return {
         "route_planning": route_planning,
         "master_data": type("Snap", (), {"business_rules": BUSINESS_RULES})(),
         "cost_optimization": cost_optimization,
         "constraint_validation": constraint_validation,
+        "replanning_attempts": replanning_attempts,
     }
 
 
@@ -107,10 +108,14 @@ async def test_at_risk_when_vehicle_capacity_exceeded():
 
 
 @pytest.mark.asyncio
-async def test_at_risk_when_replanning_was_triggered():
+async def test_at_risk_when_run_needed_replanning():
+    # constraint_validation.replanning_triggered is always False on the result that
+    # actually reaches this node (route_after_validation only proceeds downstream when
+    # it's False) - the real, persistent signal is the run-level replanning_attempts
+    # counter, which is what this agent must read instead.
     state = _state(
         _route_planning(1.0), _cost_optimization(vehicle_id=1, vehicle_capacity_exceeded=False),
-        _constraint_validation(replanning_triggered=True),
+        _constraint_validation(), replanning_attempts=1,
     )
 
     update = await predict_eta_node(state)
@@ -124,7 +129,7 @@ async def test_at_risk_when_replanning_was_triggered():
 async def test_multiple_reasons_all_recorded():
     state = _state(
         _route_planning(50.0), _cost_optimization(vehicle_id=1, vehicle_capacity_exceeded=True),
-        _constraint_validation(replanning_triggered=True),
+        _constraint_validation(), replanning_attempts=1,
     )
 
     update = await predict_eta_node(state)

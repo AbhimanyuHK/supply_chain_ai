@@ -1,8 +1,9 @@
 """Shared pytest fixtures.
 
-Sets DATABASE_URL to a dedicated SQLite test file *before* any app module is
-imported, so the engine app.database.session builds points at the test
-database rather than whatever `.env` configures for local dev.
+Pins DATABASE_URL/APP_ENV/FLEET_MODULE_ENABLED *before* any app module is
+imported, so tests are deterministic regardless of whatever `.env` configures
+for local dev (e.g. a developer running with FLEET_MODULE_ENABLED=true).
+Tests that need the flag on explicitly monkeypatch app.agents.graph.get_settings.
 """
 
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 TEST_DB_PATH = Path(__file__).parent / "test_supply_chain.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 os.environ["APP_ENV"] = "test"
+os.environ["FLEET_MODULE_ENABLED"] = "false"
 
 import pytest
 import pytest_asyncio

@@ -41,10 +41,14 @@ HTTP 200, or `"status": "degraded"` / `"dependencies.database":
 
 ### `POST /api/v1/optimize`
 
-Runs the full nine-node planning workflow (`app/api/routers/planning.py`)
-for the given scope, and returns the complete result — the same
+Runs the full planning workflow (`app/api/routers/planning.py`) for the
+given scope, and returns the complete result — the same
 `run_planning_workflow()` every other caller (the CLI script, Streamlit)
-goes through.
+goes through. This is the same graph `app/agents/graph.py::build_graph()`
+builds for every caller: 9 nodes by default, or 12 when
+`FLEET_MODULE_ENABLED=true` adds Fleet Assignment/Route Planning/ETA
+Prediction between Constraint Validation and Decision Review (see
+{doc}`../architecture/planning-workflow`).
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/optimize \
@@ -111,8 +115,9 @@ with the standard error body if the id doesn't exist:
   `ConstraintViolationError`, `ExternalServiceError`) to consistent
   `{error_code, message, details}` JSON error bodies — every route above
   gets this behavior for free, no per-endpoint error handling written.
-- **App metadata**: title/version come from `Settings.app_name` and a
-  fixed `"0.1.0"`.
+- **App metadata**: title comes from `Settings.app_name`; version is a
+  fixed `"1.2.0"` in `create_app()` (`app/api/main.py`), matching the
+  current release tag.
 
 ## Endpoints still not built, and why
 
@@ -120,13 +125,20 @@ The original spec also calls for `/forecast`, `/inventory` (POST),
 `/fleet/assign`, `/route/optimize`, `/simulate`, and `/shipments`. Each is
 deliberately out of scope for now:
 
-- **`/fleet/assign`, `/route/optimize`** — depend on the Phase 2 Fleet
-  Assignment/Route Planning agents, which don't exist yet (gated behind
-  `Settings.fleet_module_enabled`, currently `False`).
-- **`/shipments`** — the `Shipment` table is deliberately unused today
-  (see {doc}`../architecture/database-schema`); there's no approval
-  workflow yet that would turn a `FinalRecommendation` into real shipment
-  rows to expose.
+- **`/fleet/assign`, `/route/optimize`** — Phase 2's Fleet Assignment and
+  Route Planning agents are built and run as part of `/optimize` itself
+  when `FLEET_MODULE_ENABLED=true` (see {doc}`../agents/fleet-assignment-agent`,
+  {doc}`../agents/route-planning-agent`); there's no separate standalone
+  endpoint for invoking just one of them outside a full planning run, since
+  neither is meaningful without the rest of the pipeline's scenario/vehicle
+  data.
+- **`/shipments`** — the `Shipment` table is populated automatically (one
+  row per shipment line, with `vehicle_id`/`planning_run_id`) on every
+  successful run once Phase 2 is enabled — see
+  {doc}`../architecture/database-schema`. This is unconditional, not gated
+  on any future "approval" step. What's not built is a dedicated read
+  endpoint for querying those rows directly (today they're only visible via
+  the database or the full `/planning-runs/{id}` audit record).
 - **`/forecast`** — would need a new code path calling
   `forecast_demand_node` directly, bypassing the full graph — a separate,
   not-yet-designed feature, not a small addition to what's built.
