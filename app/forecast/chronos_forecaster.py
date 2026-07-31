@@ -51,6 +51,14 @@ def forecast_series_batch(
     for start in range(0, len(series_list), batch_size):
         chunk = series_list[start : start + batch_size]
         context = [torch.tensor(series, dtype=torch.float32) for series in chunk]
+        # Chronos samples multiple random trajectories internally and takes
+        # quantiles across them; without a fixed seed, identical input produces
+        # a different forecast on every call, which can flip a borderline
+        # store/product pair across the reorder-point threshold between two
+        # otherwise-identical runs. Seeding immediately before each predict()
+        # call makes this deterministic regardless of any other torch RNG
+        # usage elsewhere in the process.
+        torch.manual_seed(settings.chronos_random_seed)
         forecasts = pipeline.predict(context=context, prediction_length=prediction_length)
 
         for sample_forecast in forecasts:

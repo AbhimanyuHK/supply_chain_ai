@@ -104,6 +104,19 @@ class Settings(BaseSettings):
         ),
     )
     chronos_device: str = Field(default="cpu", description="'cpu' or 'cuda' for Chronos inference.")
+    chronos_random_seed: int = Field(
+        default=42,
+        description=(
+            "Chronos forecasts by sampling multiple random trajectories internally and "
+            "taking quantiles across them - with no fixed seed, identical historical data "
+            "can produce a slightly different forecast on every call, which can flip a "
+            "borderline store/product pair across the reorder-point threshold and change "
+            "the resulting plan. Seeding torch's RNG before every predict() call makes "
+            "forecasting itself deterministic given identical input, closing the one gap "
+            "the scope+data+engine idempotency cache doesn't cover: a genuinely fresh "
+            "computation (first run of a scope, or force_rerun=True)."
+        ),
+    )
     forecast_horizon_days: int = Field(default=14, ge=1, description="Days ahead the Demand Forecast Agent predicts.")
     forecast_batch_size: int = Field(
         default=256, ge=1, description="Store/product series per Chronos inference call."
