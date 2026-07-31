@@ -1,5 +1,7 @@
 # AI-Powered Supply Chain Planning Platform
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 Enterprise supply chain planning system: demand forecasting, inventory analysis, supply
 allocation, cost optimization, and constraint validation, orchestrated by a LangGraph
 agent workflow reasoning through Groq, Gemini, or a local Ollama model (see step 3a) with
