@@ -1,6 +1,6 @@
 [project]
 name = "supply-chain-planning-platform"
-version = "1.2.0"
+version = "1.2.1"
 description = "AI-powered Supply Chain Planning Platform (Agentic AI, LangGraph, Groq)."
 requires-python = ">=3.10"
 license = "Apache-2.0"

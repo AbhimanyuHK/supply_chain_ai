@@ -116,7 +116,7 @@ with the standard error body if the id doesn't exist:
   `{error_code, message, details}` JSON error bodies — every route above
   gets this behavior for free, no per-endpoint error handling written.
 - **App metadata**: title comes from `Settings.app_name`; version is a
-  fixed `"1.2.0"` in `create_app()` (`app/api/main.py`), matching the
+  fixed `"1.2.1"` in `create_app()` (`app/api/main.py`), matching the
   current release tag.
 
 ## Endpoints still not built, and why

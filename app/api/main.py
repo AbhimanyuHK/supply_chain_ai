@@ -16,7 +16,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
-        version="1.2.0",
+        version="1.2.1",
         description="AI-powered Supply Chain Planning Platform.",
     )
 
