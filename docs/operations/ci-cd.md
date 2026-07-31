@@ -1,22 +1,36 @@
 # CI/CD
 
-`.github/workflows/ci.yml` runs on every push/PR to `main`, plus manual
-dispatch, as **three independent jobs** — one per supported reasoning
-engine, so every one of them gets genuinely exercised rather than just
-the default.
+`.github/workflows/ci.yml` runs on every push/PR to `master`, plus manual
+dispatch, as **four independent jobs**: one hard-blocking lint job, plus
+one test job per supported reasoning engine, so every one of them gets
+genuinely exercised rather than just the default.
 
-## The three jobs
+## The four jobs
 
-| Job | Provider | Secret needed | Notes |
+| Job | Purpose | Secret needed | Notes |
 |---|---|---|---|
-| `test-groq` | Groq | `secrets.GROQ_API_KEY` | Missing secret → LLM-gated tests skip gracefully; job still passes |
-| `test-gemini` | Gemini | `secrets.GEMINI_API_KEY` | Same graceful skip behavior |
-| `test-ollama` | Ollama | None | Installs Ollama directly on the `ubuntu-latest` runner |
+| `lint` | `ruff check .` | None | Hard-blocking — the codebase is kept at 0 findings, so unlike the `test-*` jobs this one is expected to always pass |
+| `test-groq` | Full pytest suite | `secrets.GROQ_API_KEY` | Missing secret → LLM-gated tests skip gracefully; job still passes |
+| `test-gemini` | Full pytest suite | `secrets.GEMINI_API_KEY` | Same graceful skip behavior |
+| `test-ollama` | Full pytest suite | None | Installs Ollama directly on the `ubuntu-latest` runner |
 
-Each job installs `requirements-dev.txt`, sets `LLM_PROVIDER` (plus the
-relevant API key) as an environment variable, and runs `pytest -v`. No
-job can fail just because a secret is absent — see
-{doc}`testing`'s `requires_llm_configured` for why.
+## Lint
+
+`ruff` (pinned in `requirements-dev.txt`) is configured in
+`pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]` sections:
+`target-version = "py310"` (matching `requires-python`, so ruff never
+suggests syntax that would break the supported floor), plus
+`per-file-ignores` for `DTZ011` (naive `date.today()` calls) scoped to
+`tests/`/`scripts/` only — those are calendar-day test fixtures and CLI
+defaults with no real timezone semantics, not a rule relaxed for `app/`
+business logic — and `extend-immutable-calls` for FastAPI's
+`Depends()`/`Query()`/`Path()` (the required pattern for those, not the
+mutable-default-argument bug `B008` normally flags).
+
+Each `test-*` job installs `requirements-dev.txt`, sets `LLM_PROVIDER`
+(plus the relevant API key) as an environment variable, and runs
+`pytest -v`. No `test-*` job can fail just because a secret is absent —
+see {doc}`testing`'s `requires_llm_configured` for why.
 
 ## The Ollama job, in detail
 
@@ -45,7 +59,7 @@ then runs the identical `pytest -v` command with `LLM_PROVIDER=ollama`,
 
 ## Dependency caching
 
-All three jobs use `actions/setup-python`'s pip cache, keyed on
+All four jobs use `actions/setup-python`'s pip cache, keyed on
 `requirements.txt` + `requirements-dev.txt`, to avoid re-installing
 `torch`/`transformers`/`chronos-forecasting` from scratch on every run —
 these are the heaviest packages in the dependency set (see
@@ -58,4 +72,5 @@ these are the heaviest packages in the dependency set (see
 - No documentation build check (`sphinx-build`) — see
   {doc}`../reference/troubleshooting` for how to run one locally; adding
   it as a CI job is a reasonable future addition, not built here.
-- No linting/type-checking job — not yet part of this project's CI setup.
+- No type-checking job (`mypy`/`pyright`) — not yet part of this
+  project's CI setup.

@@ -12,12 +12,15 @@ Recommendation. See {doc}`../agents/overview` and
 On top of the core pipeline, several cross-cutting features are also
 shipped: a three-provider reasoning-engine abstraction
 ({doc}`../features/reasoning-engines`), a Streamlit demo dashboard
-({doc}`../interfaces/streamlit-dashboard`), full planning-run persistence
-and audit trail ({doc}`../features/persistence-and-audit-trail`),
-idempotent/cached runs ({doc}`../features/idempotency-and-caching`), a
-configurable cost objective ({doc}`../features/cost-objectives`), and six
-scalability fixes validated against the platform's real target scale
-({doc}`../features/scalability`).
+({doc}`../interfaces/streamlit-dashboard`), a REST API for triggering runs
+and browsing the audit trail ({doc}`../interfaces/rest-api`), full
+planning-run persistence and audit trail
+({doc}`../features/persistence-and-audit-trail`), idempotent/cached runs
+({doc}`../features/idempotency-and-caching`), a configurable cost
+objective ({doc}`../features/cost-objectives`), six scalability fixes
+validated against the platform's real target scale
+({doc}`../features/scalability`), and enforced lint standards
+(`ruff`, {doc}`../operations/ci-cd`).
 
 ## Phase 2 — not started
 
@@ -39,10 +42,12 @@ The original spec's remaining three agents, gated behind
 
 Documented deliberately, not hidden:
 
-- **REST API surface** — only `/health` is implemented; `/forecast`,
-  `/inventory`, `/optimize`, `/fleet/assign`, `/route/optimize`,
-  `/simulate`, `/shipments` are unbuilt. See {doc}`../interfaces/rest-api`
-  for the planned `/optimize` shape.
+- **REST API surface** — `/health`, `/optimize`, and the `/planning-runs`
+  audit endpoints are implemented; `/forecast`, `/inventory`,
+  `/fleet/assign`, `/route/optimize`, `/simulate`, `/shipments` are not.
+  See {doc}`../interfaces/rest-api` for what's built and why the rest
+  isn't yet. `/optimize` itself is synchronous for now — see the next
+  point.
 - **No forward-looking promotions/holiday calendar** — Chronos forecasts
   from historical series shape alone; there's no data source for a
   future promotion or holiday flag. See
@@ -51,10 +56,11 @@ Documented deliberately, not hidden:
   check (redundant with Inventory Analysis's existing shortage math) and
   `product_restrictions` (no field anywhere encodes which products can
   ship to which stores). See {doc}`../agents/constraint-validation-agent`.
-- **No task queue for concurrent runs** — fine today since no
-  concurrent-triggering endpoint exists; the recommended design
-  (`BackgroundTasks` + status polling) is documented in
-  {doc}`../features/scalability` (Fix 6), not built.
+- **`/optimize` is synchronous, no task queue for concurrent runs** — fine
+  today at this platform's scale (single-digit-to-low-tens-of-seconds
+  runs); the recommended upgrade (`BackgroundTasks` + a `PENDING` status +
+  polling) is documented in {doc}`../features/scalability` (Fix 6), not
+  built.
 - **RPM pacing for LLM batches** — the current fix bounds *simultaneity*
   (a semaphore), not requests-per-minute. Not an issue for Groq, but
   Gemini's tight per-minute cap can still be exceeded across sequential
@@ -69,8 +75,9 @@ Documented deliberately, not hidden:
 
 ## Natural next steps, roughly in priority order
 
-1. Build the `/optimize` REST endpoint (the highest-value missing piece
-   for anything beyond the CLI script/Streamlit dashboard).
+1. Upgrade `/optimize` to the `BackgroundTasks` + `202` + polling pattern
+   if request volume or scope size ever makes the current synchronous
+   response too slow (see {doc}`../features/scalability`, Fix 6).
 2. Insert `Shipment` rows from an approved `FinalRecommendation` — the
    natural bridge from an AI-generated plan to an operational shipment
    record (see {doc}`../architecture/database-schema`).

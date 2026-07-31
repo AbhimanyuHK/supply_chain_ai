@@ -108,9 +108,10 @@ Final Recommendation. See {doc}`planning-workflow` for the full graph and
 
 - Fleet Assignment, Route Planning, and ETA Prediction/Exception Handling
   agents — gated behind `Settings.fleet_module_enabled`, not started.
-- The `/forecast`, `/inventory` (POST), `/optimize`, `/fleet/assign`,
-  `/route/optimize`, `/simulate`, `/shipments` REST endpoints — only routing
-  scaffolding exists; see {doc}`../interfaces/rest-api`.
+- The `/forecast`, `/inventory` (POST), `/fleet/assign`, `/route/optimize`,
+  `/simulate`, `/shipments` REST endpoints (`/optimize` and the
+  `/planning-runs` audit endpoints are built — see {doc}`../interfaces/rest-api`
+  for what's implemented and why the rest isn't yet).
 - A forward-looking promotions/holiday calendar for demand forecasting (no
   data source exists in the model — see {doc}`../agents/demand-forecast-agent`).
 - Two of the original spec's nine listed constraints (`safety_stock` as a

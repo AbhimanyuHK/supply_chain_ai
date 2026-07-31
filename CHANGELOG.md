@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **REST API**: `POST /api/v1/optimize` triggers the full planning workflow
+  synchronously and returns the complete result (including a
+  `planning_run_id`); `GET /api/v1/planning-runs` and
+  `GET /api/v1/planning-runs/{id}` browse the audit trail. `/health` stays
+  unprefixed; the new endpoints are mounted under `Settings.api_v1_prefix`
+  (previously declared but unused). See `docs/interfaces/rest-api.md`.
+- **Enforced lint standard**: `ruff` is now installed (`requirements-dev.txt`)
+  and run as a hard-blocking CI job — previously configured in
+  `pyproject.toml` but never actually installed or run anywhere.
+
+### Fixed
+
+- 90 pre-existing lint findings (import order, unused `noqa`s, naive
+  datetimes in test fixtures, dict-literal style, deprecated typing
+  imports) cleaned up; `ruff`'s `target-version` corrected from `py312` to
+  `py310` to match `requires-python` (it was suggesting py311+-only syntax
+  that would have broken the supported floor).
+- `run_planning_workflow()` now returns the persisted run's id
+  (`PlanningState.planning_run_id`) — previously there was no way for a
+  caller to look a run up again after the fact without querying the
+  history list.
+
 ## [1.0.0] - 2026-07-31
 
 First tagged release. Phase 1 of the spec's 13-agent list is complete: all ten

@@ -1,9 +1,9 @@
 # REST API
 
-`app/api/main.py::create_app()` — a FastAPI application factory. This is
-the thinnest of the three interfaces (script, Streamlit, API) today: only
-the health check is actually wired up. Everything else is a documented
-gap, not a hidden one.
+`app/api/main.py::create_app()` — a FastAPI application factory. `/health`
+stays unprefixed (the standard convention: infra/load-balancer probes
+expect a stable, unversioned path); the planning endpoints are mounted
+under `Settings.api_v1_prefix` (`/api/v1` by default).
 
 ## What exists today
 
@@ -16,60 +16,132 @@ gap, not a hidden one.
 * - `/health`
   - GET
   - Implemented
+* - `/api/v1/optimize`
+  - POST
+  - Implemented
+* - `/api/v1/planning-runs`
+  - GET
+  - Implemented
+* - `/api/v1/planning-runs/{run_id}`
+  - GET
+  - Implemented
 ```
 
-`GET /health` (`app/api/routers/health.py`) checks database connectivity
-via `check_database_connection()` and returns:
+### `GET /health`
+
+`app/api/routers/health.py` checks database connectivity via
+`check_database_connection()`:
 
 ```json
 {"status": "ok", "dependencies": {"database": "ok"}}
 ```
 
-with HTTP 200, or `"status": "degraded"` / `"dependencies.database":
+HTTP 200, or `"status": "degraded"` / `"dependencies.database":
 "unavailable"` with HTTP 503 if the database is unreachable.
 
+### `POST /api/v1/optimize`
+
+Runs the full nine-node planning workflow (`app/api/routers/planning.py`)
+for the given scope, and returns the complete result — the same
+`run_planning_workflow()` every other caller (the CLI script, Streamlit)
+goes through.
+
 ```bash
-venv\Scripts\python.exe -m uvicorn app.api.main:app --reload --port 8000
-curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/api/v1/optimize \
+  -H "Content-Type: application/json" \
+  -d '{"store_ids": [1, 2], "optimization_objective": "minimize_cost"}'
 ```
 
-## Cross-cutting API infrastructure (already built, ready for new routers)
+Request body is a `PlanningRequest` (see {doc}`../getting-started/configuration`
+for every field); `force_rerun` is a query parameter (`?force_rerun=true`)
+to bypass the {doc}`idempotency cache <../features/idempotency-and-caching>`.
+Response is an `OptimizeResponse` (`app/schemas/api.py`) — every pipeline
+stage's real output, plus `planning_run_id` for looking the run up later:
+
+```json
+{
+  "planning_run_id": 8,
+  "trace": ["Loaded master data: ...", "..."],
+  "errors": [],
+  "replanning_attempts": 0,
+  "master_data": { "...": "..." },
+  "demand_forecast": { "...": "..." },
+  "final_recommendation": { "...": "..." }
+}
+```
+
+```{important}
+**This endpoint is synchronous** — the HTTP request stays open for the
+whole run (a few seconds to low tens of seconds at this platform's current
+scale: `chronos-t5-tiny` inference plus up to 4 LLM calls). This is a
+deliberate choice, not an oversight: no task-queue infrastructure exists
+yet, and building the previously-considered `BackgroundTasks` + `202` +
+polling pattern properly would require a new `PENDING` `PlanningRunStatus`
+and restructuring the persistence hook to create-then-update a row instead
+of always creating fresh — real surgery on the core, fully-tested
+idempotency/persistence logic in `app/agents/graph.py`, for a benefit this
+deployment doesn't need yet. See {doc}`../features/scalability` (Fix 6)
+for the upgrade path this can move to if request volume or scope size ever
+requires it.
+```
+
+### `GET /api/v1/planning-runs`
+
+Lists recent planning runs across every scope, most recent first
+(`?limit=50` by default) — wraps
+`PlanningRunRepository.list_recent()`, returning lightweight
+`PlanningRunSummary` rows (no stage payloads).
+
+### `GET /api/v1/planning-runs/{run_id}`
+
+The full audit record for one run — every stage's real output, exactly
+what {doc}`../features/persistence-and-audit-trail` describes — or a `404`
+with the standard error body if the id doesn't exist:
+
+```json
+{"error_code": "not_found", "message": "PlanningRun 999999 not found", "details": {"run_id": 999999}}
+```
+
+## Cross-cutting API infrastructure
 
 - **CORS**: `Settings.cors_allow_origins` (default `["*"]`), configured
   once in `create_app()`.
 - **Error handling**: `app/core/exceptions.py::register_exception_handlers`
   wires the `DomainError` hierarchy (`NotFoundError`, `ValidationError`,
   `ConstraintViolationError`, `ExternalServiceError`) to consistent
-  `{error_code, message, details}` JSON error bodies — any future router
-  raising one of these gets this behavior for free.
+  `{error_code, message, details}` JSON error bodies — every route above
+  gets this behavior for free, no per-endpoint error handling written.
 - **App metadata**: title/version come from `Settings.app_name` and a
   fixed `"0.1.0"`.
 
-## Endpoints not yet built
+## Endpoints still not built, and why
 
-The original spec calls for `/forecast`, `/inventory` (POST),
-`/optimize`, `/fleet/assign`, `/route/optimize`, `/simulate`, and
-`/shipments`. None exist yet — only routing scaffolding
-(the comment in `create_app()` marking where future routers register).
+The original spec also calls for `/forecast`, `/inventory` (POST),
+`/fleet/assign`, `/route/optimize`, `/simulate`, and `/shipments`. Each is
+deliberately out of scope for now:
 
-The natural shape for the highest-value one, `/optimize`, given
-everything already built:
+- **`/fleet/assign`, `/route/optimize`** — depend on the Phase 2 Fleet
+  Assignment/Route Planning agents, which don't exist yet (gated behind
+  `Settings.fleet_module_enabled`, currently `False`).
+- **`/shipments`** — the `Shipment` table is deliberately unused today
+  (see {doc}`../architecture/database-schema`); there's no approval
+  workflow yet that would turn a `FinalRecommendation` into real shipment
+  rows to expose.
+- **`/forecast`** — would need a new code path calling
+  `forecast_demand_node` directly, bypassing the full graph — a separate,
+  not-yet-designed feature, not a small addition to what's built.
+- **`/inventory` (POST)** — basic CRUD on the `Inventory` table; not
+  built because the spec doesn't clearly scope it apart from every other
+  entity's CRUD (why `/inventory` specifically and not stores/products/
+  terminals too), and this platform's value is the planning workflow, not
+  a general data-management API.
 
-1. Accept a `PlanningRequest` body.
-2. Kick off `run_planning_workflow(request)` via FastAPI
-   `BackgroundTasks`, returning `202 Accepted` with the eventual
-   `PlanningRun.id` immediately — the workflow can take several seconds
-   (LLM calls, Chronos inference), too long for a synchronous response at
-   scale.
-3. Client polls `GET /planning-runs/{id}` for status —
-   `PlanningRunRepository.get_by_id` already exists and `PlanningRun`
-   already tracks `status` (`success`/`failed`), so this needs no new
-   persistence infrastructure, only the route itself. See
-   {doc}`../features/scalability` (Fix 6) for the full reasoning behind
-   this design, including why a real task queue isn't needed yet.
+See {doc}`../reference/roadmap` for the full, up-to-date list.
 
 ## Testing
 
-`tests/test_health_api.py` covers the one implemented endpoint using
-`httpx.AsyncClient` against the FastAPI app directly (no running server
-needed). See {doc}`../operations/testing`.
+`tests/test_health_api.py` and `tests/test_planning_api.py` cover every
+implemented endpoint using `httpx.AsyncClient` against the FastAPI app
+directly (no running server needed) — the same pattern this section
+described before any endpoint beyond `/health` existed. See
+{doc}`../operations/testing`.

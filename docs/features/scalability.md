@@ -101,20 +101,26 @@ historical runs.
 
 ## Fix 6 — No task queue for concurrent runs
 
-Confirmed via `app/api/routers/` that no `/optimize`-style endpoint
-exists yet — the only current callers of `run_planning_workflow` are the
-single-process/single-user Streamlit dashboard and tests, so this isn't a
-currently-exposed problem. This project also has an explicit prior
-decision not to add Redis speculatively, and a real task queue typically
-needs a broker.
+`POST /api/v1/optimize` (see {doc}`../interfaces/rest-api`) now exists,
+but it's deliberately **synchronous** — the request stays open for the
+whole run. This project also has an explicit prior decision not to add
+Redis speculatively, and a real task queue typically needs a broker, so
+building either wasn't justified just to ship the endpoint.
 
-**Decision: documented, not built.** When the REST `/optimize` endpoint
-is eventually built, use FastAPI `BackgroundTasks` to kick off the run
-and return `202` immediately with the run's id, with the client polling
-`GET /planning-runs/{id}`
-(`PlanningRunRepository.get_by_id` already exists) for status — zero new
-infrastructure, since `PlanningRun` already tracks status transitions.
-Running multiple ASGI worker processes (an ops decision, not new code)
-gives real process-level concurrency on top of that. A real queue (`arq`
-+ a lightweight broker) is the right call only once that's genuinely not
-enough.
+**Decision: documented, not built yet.** The natural upgrade, when
+request volume or scope size makes a synchronous response genuinely too
+slow: use FastAPI `BackgroundTasks` to kick off the run and return `202`
+immediately with the run's id, client polling `GET /planning-runs/{id}`
+for status. This needs slightly more than "zero new infrastructure" —
+`PlanningRun` today only ever gets a single terminal write (`SUCCESS` or
+`FAILED`, all at once, at the end of `_persist_run`); there's no
+`PENDING` status or in-place row update yet, since nothing has needed one
+until this endpoint existed. Adding that is still a modest, well-scoped
+change (a new `PlanningRunStatus.PENDING` value + a migration +
+restructuring `_persist_run` to create-then-update instead of always
+creating fresh) — deferred because the platform's current scale
+(single-digit-to-low-tens-of-seconds runs) doesn't need it yet, not
+because it's hard. Running multiple ASGI worker processes (an ops
+decision, not new code) gives real process-level concurrency on top of
+either approach. A real queue (`arq` + a lightweight broker) is the right
+call only once that's genuinely not enough.
