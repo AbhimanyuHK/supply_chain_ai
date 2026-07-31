@@ -252,6 +252,78 @@ def render_intermediate_data(result: dict) -> None:
     else:
         st.info("No scenarios to validate.")
 
+    # Phase 2 (only present when Settings.fleet_module_enabled was True for this run).
+    fleet_assignment = result.get("fleet_assignment")
+    if fleet_assignment is not None:
+        st.subheader("Fleet assignment — Phase 2")
+        for sa in fleet_assignment.scenario_assignments:
+            st.markdown(f"**{sa.strategy}**")
+            if sa.vehicle_loads:
+                summary = pd.DataFrame(
+                    [
+                        {
+                            "vehicle_id": vl.vehicle_id,
+                            "terminal_id": vl.terminal_id,
+                            "lines": len(vl.lines),
+                            "weight (used/capacity)": f"{vl.total_weight:.1f} / {vl.capacity_weight:.1f}",
+                            "volume (used/capacity)": f"{vl.total_volume:.1f} / {vl.capacity_volume:.1f}",
+                        }
+                        for vl in sa.vehicle_loads
+                    ]
+                )
+                st.dataframe(summary, use_container_width=True)
+            else:
+                st.info("No vehicles assigned.")
+            if sa.unassigned_lines:
+                st.warning(
+                    f"{len(sa.unassigned_lines)} line(s) unassignable — no available vehicle had enough "
+                    "capacity to carry them alone."
+                )
+
+    route_planning = result.get("route_planning")
+    if route_planning is not None:
+        st.subheader("Route planning — Phase 2")
+        st.caption(
+            "Stop order is nearest-terminal-distance-first; distance/cost are documented "
+            "proxies (no store-to-store distance data exists in this platform's model)."
+        )
+        for sr in route_planning.scenario_routes:
+            st.markdown(f"**{sr.strategy}**")
+            if sr.vehicle_routes:
+                for route in sr.vehicle_routes:
+                    st.caption(
+                        f"Vehicle {route.vehicle_id} (terminal {route.terminal_id}) — "
+                        f"{route.total_route_distance_km:.1f} km, "
+                        f"route cost {route.route_transportation_cost:.2f}"
+                    )
+                    st.dataframe(_df(route.stops), use_container_width=True)
+            else:
+                st.info("No routes planned.")
+
+    eta_prediction = result.get("eta_prediction")
+    if eta_prediction is not None:
+        st.subheader("ETA prediction & risk flags — Phase 2")
+        for sp in eta_prediction.scenario_predictions:
+            st.markdown(f"**{sp.strategy}** — {sp.at_risk_count} stop(s) at risk")
+            if sp.stop_etas:
+                summary = pd.DataFrame(
+                    [
+                        {
+                            "vehicle_id": s.vehicle_id,
+                            "store_id": s.store_id,
+                            "sequence": s.sequence,
+                            "predicted_eta_hours": round(s.predicted_eta_hours, 2),
+                            "at_risk": "⚠️" if s.at_risk else "",
+                            "risk_reasons": ", ".join(s.risk_reasons),
+                            "suggested_contingency": s.suggested_contingency or "",
+                        }
+                        for s in sp.stop_etas
+                    ]
+                )
+                st.dataframe(summary, use_container_width=True)
+            else:
+                st.info("No stops to predict ETAs for.")
+
 
 def render_final_plan(result: dict) -> None:
     decision_review = result["decision_review"]

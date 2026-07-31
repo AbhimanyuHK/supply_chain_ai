@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "streamlit-demo",
+      "runtimeExecutable": "venv-ui\\Scripts\\streamlit.exe",
+      "runtimeArgs": ["run", "streamlit_app.py"],
+      "port": 8501
+    }
+  ]
+}
