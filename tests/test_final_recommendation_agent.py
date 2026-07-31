@@ -75,12 +75,13 @@ def test_build_shipment_plan_reuses_module5_rationale_and_module7_costs():
         estimated_delivery_hours=2.0, rationale="Closest terminal with lowest cost.", score=95.0,
     )
 
-    plan = _build_shipment_plan(scenario, cost_summary, [candidate])
+    plan = _build_shipment_plan(scenario, cost_summary, [candidate], {})
 
     assert len(plan) == 1
     assert plan[0].explanation == "Closest terminal with lowest cost."
     assert plan[0].total_cost == 47.0
     assert plan[0].transportation_cost == 40.0
+    assert plan[0].vehicle_id is None  # fleet module disabled - no enrichment data
 
 
 def test_build_shipment_plan_falls_back_to_generic_explanation_when_no_candidate_matches():
@@ -88,9 +89,22 @@ def test_build_shipment_plan_falls_back_to_generic_explanation_when_no_candidate
     scenario = _scenario("priority_first", lines)
     cost_summary = _cost_summary("priority_first", lines, total_cost=47.0)
 
-    plan = _build_shipment_plan(scenario, cost_summary, candidate_plans=[])
+    plan = _build_shipment_plan(scenario, cost_summary, [], {})
 
     assert plan[0].explanation == "Selected as part of the recommended allocation strategy."
+
+
+def test_build_shipment_plan_attaches_fleet_route_eta_when_present():
+    lines = [_line(terminal_id=1, store_id=1, product_id=1, quantity=10)]
+    scenario = _scenario("priority_first", lines)
+    cost_summary = _cost_summary("priority_first", lines, total_cost=47.0)
+    enrichment = {(1, 1, 1): (7, 2, 3.5)}
+
+    plan = _build_shipment_plan(scenario, cost_summary, [], enrichment)
+
+    assert plan[0].vehicle_id == 7
+    assert plan[0].route_sequence == 2
+    assert plan[0].predicted_eta_hours == 3.5
 
 
 def _snapshot() -> MasterDataSnapshot:

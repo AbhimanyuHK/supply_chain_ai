@@ -12,6 +12,11 @@ class ShipmentBase(BaseModel):
     quantity: int = Field(..., gt=0)
     shipment_date: date
     status: ShipmentStatus = ShipmentStatus.PLANNED
+    # Populated by the Fleet Assignment Agent (Phase 2) - None if the fleet module
+    # is disabled or this line couldn't be assigned a vehicle.
+    vehicle_id: int | None = None
+    # Which PlanningRun produced this shipment.
+    planning_run_id: int | None = None
 
 
 class ShipmentCreate(ShipmentBase):

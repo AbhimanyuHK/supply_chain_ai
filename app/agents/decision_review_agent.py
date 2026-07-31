@@ -22,6 +22,7 @@ from functools import lru_cache
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from app.agents.scenario_selection import select_reviewable_scenarios
 from app.agents.state import PlanningState
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
@@ -137,13 +138,7 @@ async def review_decision_node(state: PlanningState) -> dict:
     validation = state["constraint_validation"]
     settings = get_settings()
 
-    validity_by_strategy = {v.strategy: v.is_valid for v in validation.scenario_validations}
-    reviewable_scenarios = [s for s in allocation.scenarios if validity_by_strategy.get(s.strategy, False)]
-
-    fell_back = False
-    if not reviewable_scenarios:
-        reviewable_scenarios = [s for s in allocation.scenarios if s.strategy == validation.final_strategy]
-        fell_back = True
+    reviewable_scenarios, fell_back = select_reviewable_scenarios(allocation, validation)
 
     cost_by_strategy = {s.strategy: s for s in cost_optimization.scenarios}
     distance_by_pair = {
@@ -155,6 +150,21 @@ async def review_decision_node(state: PlanningState) -> dict:
         if inv.location_type == LocationType.TERMINAL
     }
 
+    # Phase 2 passthrough metrics (see ScenarioEvaluation's docstring): real
+    # data captured, not yet weighed into the LLM prompt or argmax selection.
+    fleet_assignment = state.get("fleet_assignment")
+    unassigned_by_strategy = (
+        {sa.strategy: len(sa.unassigned_lines) for sa in fleet_assignment.scenario_assignments}
+        if fleet_assignment is not None
+        else {}
+    )
+    eta_prediction = state.get("eta_prediction")
+    at_risk_by_strategy = (
+        {sp.strategy: sp.at_risk_count for sp in eta_prediction.scenario_predictions}
+        if eta_prediction is not None
+        else {}
+    )
+
     metrics_by_strategy: dict[str, dict] = {}
     for scenario in reviewable_scenarios:
         cost_summary = cost_by_strategy.get(scenario.strategy)
@@ -162,6 +172,8 @@ async def review_decision_node(state: PlanningState) -> dict:
             "inventory_balance_score": _inventory_balance_score(scenario.lines, terminal_available),
             "total_transportation_distance_km": _total_distance_km(scenario.lines, distance_by_pair),
             "demand_fulfillment_rate": scenario.fulfillment_rate,
+            "unassigned_lines_count": unassigned_by_strategy.get(scenario.strategy, 0),
+            "at_risk_stops_count": at_risk_by_strategy.get(scenario.strategy, 0),
             "future_inventory_risk_ratio": _future_inventory_risk_ratio(
                 scenario.lines, terminal_available, settings.decision_review_critical_stock_threshold
             ),

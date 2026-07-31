@@ -28,6 +28,12 @@ class BusinessRules(BaseModel):
     delay_penalty_per_hour: float = 20.0
     max_lead_time_days: int = 5
 
+    # Phase 2: Fleet Assignment / Route Planning / ETA Prediction Agent - real-world
+    # variability buffer applied to cumulative travel_time when predicting a stop's
+    # ETA (DistanceMatrix.travel_time is already real hours at an assumed speed, so
+    # no separate vehicle-speed constant is needed here).
+    eta_variance_buffer_pct: float = 0.15
+
 
 @lru_cache
 def get_business_rules() -> BusinessRules:

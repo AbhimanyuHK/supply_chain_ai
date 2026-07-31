@@ -8,9 +8,14 @@ routes back to Supply Planning (capped by `max_replanning_attempts`) instead
 of on to Decision Review - see
 `constraint_validation_agent.route_after_validation`.
 
-This completes every Phase 1 agent in the spec's 13-agent list. Only Phase
-2's Fleet Assignment, Route Planning, and ETA Prediction/Exception Handling
-agents remain, gated behind `Settings.fleet_module_enabled`.
+This completes every Phase 1 agent in the spec's 13-agent list. Phase 2's
+three remaining agents - Fleet Assignment, Route Planning, and ETA
+Prediction/Exception Handling - are gated behind
+`Settings.fleet_module_enabled` (default `False`): when enabled,
+`build_graph()` inserts `assign_fleet -> plan_route -> predict_eta` between
+Constraint Validation's "end" branch and Decision Review, so a run with the
+flag off reproduces byte-identical 9-node behavior to before Phase 2
+existed.
 
 Every invocation of `run_planning_workflow` is persisted as a `PlanningRun`
 audit row (see `app/models/entities.py` and `_persist_run` below) - which
@@ -43,14 +48,17 @@ from app.agents.constraint_validation_agent import route_after_validation, valid
 from app.agents.cost_optimization_agent import optimize_cost_node
 from app.agents.decision_review_agent import review_decision_node
 from app.agents.demand_forecast_agent import forecast_demand_node
+from app.agents.eta_prediction_agent import predict_eta_node
 from app.agents.final_recommendation_agent import recommend_final_node
+from app.agents.fleet_assignment_agent import assign_fleet_node
 from app.agents.inventory_analysis_agent import analyze_inventory_node
 from app.agents.master_data_agent import load_master_data_node
+from app.agents.route_planning_agent import plan_route_node
 from app.agents.state import PlanningState
 from app.agents.supply_planning_agent import plan_supply_node
 from app.core.config import get_settings
 from app.core.llm import get_active_model_name
-from app.database.repositories import PlanningRunRepository
+from app.database.repositories import PlanningRunRepository, ShipmentRepository
 from app.database.session import AsyncSessionLocal
 from app.models.entities import PlanningRun, PlanningRunStatus
 from app.schemas.planning import PlanningRequest
@@ -78,9 +86,23 @@ def build_graph() -> CompiledStateGraph:
     graph.add_edge("plan_supply", "allocate")
     graph.add_edge("allocate", "optimize_cost")
     graph.add_edge("optimize_cost", "validate_constraints")
-    graph.add_conditional_edges(
-        "validate_constraints", route_after_validation, {"replan": "plan_supply", "end": "review_decision"}
-    )
+
+    if get_settings().fleet_module_enabled:
+        graph.add_node("assign_fleet", assign_fleet_node)
+        graph.add_node("plan_route", plan_route_node)
+        graph.add_node("predict_eta", predict_eta_node)
+
+        graph.add_conditional_edges(
+            "validate_constraints", route_after_validation, {"replan": "plan_supply", "end": "assign_fleet"}
+        )
+        graph.add_edge("assign_fleet", "plan_route")
+        graph.add_edge("plan_route", "predict_eta")
+        graph.add_edge("predict_eta", "review_decision")
+    else:
+        graph.add_conditional_edges(
+            "validate_constraints", route_after_validation, {"replan": "plan_supply", "end": "review_decision"}
+        )
+
     graph.add_edge("review_decision", "recommend_final")
     graph.add_edge("recommend_final", END)
 
@@ -95,6 +117,9 @@ _STAGE_KEYS = (
     "allocation",
     "cost_optimization",
     "constraint_validation",
+    "fleet_assignment",
+    "route_planning",
+    "eta_prediction",
     "decision_review",
     "final_recommendation",
 )
@@ -119,6 +144,20 @@ async def _persist_run(
     are stored - `graph.ainvoke()` has no checkpointer configured, so a mid-run
     exception propagates with no partial state to persist (see `PlanningRun`'s
     docstring).
+
+    On success, also writes one real `Shipment` row per `ShipmentPlanLine` in
+    the final recommendation - every successful run, unconditionally (a
+    business decision: this table should reflect what the platform actually
+    recommended, not wait on some future "approve this plan" step) - each
+    linked back to this `PlanningRun` via `planning_run_id`, with `vehicle_id`
+    from Fleet Assignment when the fleet module is enabled (`None` otherwise,
+    or for a line Fleet Assignment couldn't assign a vehicle to). This is
+    inside the same transaction as the audit row itself: a trade-off, not an
+    oversight - a Shipment-insert failure now rolls back the whole
+    transaction, so a successful plan could end up with no audit row at all.
+    Matches the existing "never break the real run" philosophy (the caller's
+    actual result is still returned either way), but is a new failure mode
+    worth knowing about.
 
     Never raises: a DB write hiccup must not crash or mask the actual planning
     result/exception, so any failure here is only logged.
@@ -168,6 +207,22 @@ async def _persist_run(
 
         async with AsyncSessionLocal() as session:
             run = await PlanningRunRepository(session).create(**fields)
+
+            if error is None and state is not None:
+                final_recommendation = state.get("final_recommendation")
+                if final_recommendation is not None and final_recommendation.shipment_plan:
+                    shipment_repo = ShipmentRepository(session)
+                    for line in final_recommendation.shipment_plan:
+                        await shipment_repo.create(
+                            terminal_id=line.terminal_id,
+                            store_id=line.store_id,
+                            product_id=line.product_id,
+                            quantity=line.quantity,
+                            shipment_date=request.planning_date,
+                            vehicle_id=line.vehicle_id,
+                            planning_run_id=run.id,
+                        )
+
             await session.commit()
             return run
     except Exception as exc:  # noqa: BLE001 - persistence must never break a real run

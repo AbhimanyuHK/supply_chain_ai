@@ -17,6 +17,14 @@ class ShipmentPlanLine(BaseModel):
     # Reused from Module 5's per-candidate rationale for this exact (terminal, store,
     # product) - not a fresh LLM call per line.
     explanation: str
+    # Phase 2 (None when Settings.fleet_module_enabled is False, or if Fleet
+    # Assignment couldn't assign this line a vehicle): the authoritative,
+    # binding vehicle assignment - supersedes and may legitimately disagree
+    # with Cost Optimization's own per-line vehicle pick, which is only a
+    # costing proxy (see docs/agents/fleet-assignment-agent.md).
+    vehicle_id: int | None = None
+    route_sequence: int | None = None
+    predicted_eta_hours: float | None = None
 
 
 class InventoryProjection(BaseModel):

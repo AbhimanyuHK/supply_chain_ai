@@ -40,13 +40,16 @@ from app.models.entities import LocationType
 from app.schemas.allocation import AllocationScenario
 from app.schemas.cost_optimization import ScenarioCostSummary
 from app.schemas.decision_review import DecisionReviewResult
+from app.schemas.eta_prediction import ETAPredictionResult
 from app.schemas.final_recommendation import (
     AlternativeRecommendation,
     FinalRecommendation,
     InventoryProjection,
     ShipmentPlanLine,
 )
+from app.schemas.fleet_assignment import FleetAssignmentResult
 from app.schemas.planning import MasterDataSnapshot
+from app.schemas.route_planning import RoutePlanningResult
 from app.schemas.supply_planning import CandidatePlan
 
 
@@ -62,8 +65,61 @@ def _get_structured_llm():
     return get_chat_model().with_structured_output(_LLMFinalSynthesis)
 
 
+def _fleet_route_eta_enrichment(
+    strategy: str,
+    fleet_assignment: FleetAssignmentResult | None,
+    route_planning: RoutePlanningResult | None,
+    eta_prediction: ETAPredictionResult | None,
+) -> dict[tuple[int, int, int], tuple[int | None, int | None, float | None]]:
+    """Maps (terminal_id, store_id, product_id) -> (vehicle_id, route_sequence,
+    predicted_eta_hours) for the selected scenario. All `None` when the fleet
+    module is disabled (`fleet_assignment` is `None`) or a line has no
+    matching Phase 2 data (e.g. Fleet Assignment couldn't assign it a vehicle).
+    """
+    if fleet_assignment is None:
+        return {}
+
+    scenario_assignment = next(
+        (sa for sa in fleet_assignment.scenario_assignments if sa.strategy == strategy), None
+    )
+    if scenario_assignment is None:
+        return {}
+
+    sequence_by_vehicle_store: dict[tuple[int, int], int] = {}
+    if route_planning is not None:
+        scenario_route = next((sr for sr in route_planning.scenario_routes if sr.strategy == strategy), None)
+        if scenario_route is not None:
+            for route in scenario_route.vehicle_routes:
+                for stop in route.stops:
+                    sequence_by_vehicle_store[(route.vehicle_id, stop.store_id)] = stop.sequence
+
+    eta_by_vehicle_store: dict[tuple[int, int], float] = {}
+    if eta_prediction is not None:
+        scenario_prediction = next(
+            (sp for sp in eta_prediction.scenario_predictions if sp.strategy == strategy), None
+        )
+        if scenario_prediction is not None:
+            for stop_eta in scenario_prediction.stop_etas:
+                eta_by_vehicle_store[(stop_eta.vehicle_id, stop_eta.store_id)] = stop_eta.predicted_eta_hours
+
+    enrichment: dict[tuple[int, int, int], tuple[int | None, int | None, float | None]] = {}
+    for vehicle_load in scenario_assignment.vehicle_loads:
+        for line in vehicle_load.lines:
+            key = (line.terminal_id, line.store_id, line.product_id)
+            vehicle_store_key = (vehicle_load.vehicle_id, line.store_id)
+            enrichment[key] = (
+                vehicle_load.vehicle_id,
+                sequence_by_vehicle_store.get(vehicle_store_key),
+                eta_by_vehicle_store.get(vehicle_store_key),
+            )
+    return enrichment
+
+
 def _build_shipment_plan(
-    scenario: AllocationScenario, cost_summary: ScenarioCostSummary, candidate_plans: list[CandidatePlan]
+    scenario: AllocationScenario,
+    cost_summary: ScenarioCostSummary,
+    candidate_plans: list[CandidatePlan],
+    fleet_route_eta_by_key: dict[tuple[int, int, int], tuple[int | None, int | None, float | None]],
 ) -> list[ShipmentPlanLine]:
     cost_line_by_key = {(c.terminal_id, c.store_id, c.product_id): c for c in cost_summary.lines}
     rationale_by_key: dict[tuple[int, int, int], str] = {}
@@ -74,6 +130,7 @@ def _build_shipment_plan(
     for line in scenario.lines:
         key = (line.terminal_id, line.store_id, line.product_id)
         cost_line = cost_line_by_key.get(key)
+        vehicle_id, route_sequence, predicted_eta_hours = fleet_route_eta_by_key.get(key, (None, None, None))
         shipment_plan.append(
             ShipmentPlanLine(
                 terminal_id=line.terminal_id,
@@ -89,6 +146,9 @@ def _build_shipment_plan(
                 explanation=rationale_by_key.get(
                     key, "Selected as part of the recommended allocation strategy."
                 ),
+                vehicle_id=vehicle_id,
+                route_sequence=route_sequence,
+                predicted_eta_hours=predicted_eta_hours,
             )
         )
     return shipment_plan
@@ -182,14 +242,18 @@ def _build_prompt(
         f"- Total cost: {evaluation.total_cost:.2f}\n"
         f"- Fell back to a best-effort (constraint-violating) plan: {fell_back}\n"
         f"- Unresolved constraint violations remaining: {unresolved_violation_count}\n"
-        f"- Shortages with no candidate terminal at all (unfulfillable): {unresolved_shortage_count}\n\n"
+        f"- Shortages with no candidate terminal at all (unfulfillable): {unresolved_shortage_count}\n"
+        f"- Shipment lines flagged at elevated delivery risk (tight lead time, an "
+        f"overloaded vehicle, or a scenario that already needed replanning once): "
+        f"{evaluation.at_risk_stops_count}\n\n"
         "Write: (1) a short 2-3 sentence business explanation of why this plan is "
         "recommended, in the style of 'Store X will receive Y units of Z because it "
         "minimizes distance, satisfies demand, and reduces logistics cost'; (2) a short "
         "risk assessment paragraph covering the real risks above; (3) 2-4 short recommended "
         "contingency actions if those risks materialize; (4) a 0-100 confidence score - "
         "reduce it noticeably if the plan fell back to a constraint-violating option, has "
-        "unresolved violations, or leaves unfulfillable shortages."
+        "unresolved violations, leaves unfulfillable shortages, or has shipment lines "
+        "flagged at elevated delivery risk."
     )
 
 
@@ -226,7 +290,12 @@ async def recommend_final_node(state: PlanningState) -> dict:
     selected_cost = next(s for s in cost_optimization.scenarios if s.strategy == selected_strategy)
     selected_evaluation = next(e for e in decision_review.evaluations if e.strategy == selected_strategy)
 
-    shipment_plan = _build_shipment_plan(selected_scenario, selected_cost, supply_planning.candidate_plans)
+    fleet_route_eta_by_key = _fleet_route_eta_enrichment(
+        selected_strategy, state.get("fleet_assignment"), state.get("route_planning"), state.get("eta_prediction")
+    )
+    shipment_plan = _build_shipment_plan(
+        selected_scenario, selected_cost, supply_planning.candidate_plans, fleet_route_eta_by_key
+    )
     expected_inventory = _compute_expected_inventory(selected_scenario, snapshot)
     alternatives = _build_alternatives(decision_review, selected_strategy)
 

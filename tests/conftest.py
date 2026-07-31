@@ -115,8 +115,10 @@ async def committed_db():
 
     async with AsyncSessionLocal() as session:
         for model in (
-            PlanningRun,
+            # Shipment now has FKs to both PlanningRun and Fleet (Phase 2), so it
+            # must be deleted before either of those, not after.
             Shipment,
+            PlanningRun,
             DistanceMatrix,
             DemandHistory,
             Inventory,

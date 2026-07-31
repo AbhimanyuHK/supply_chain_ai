@@ -17,6 +17,13 @@ class ScenarioEvaluation(BaseModel):
     high_priority_shortages_fulfilled: int
     high_priority_shortages_total: int
 
+    # Phase 2 passthrough (0 when the fleet module is disabled): real data
+    # captured from Fleet Assignment/ETA Prediction, NOT yet fed into the LLM
+    # prompt below or the argmax selection - a deliberate, documented
+    # follow-up, not an oversight (see docs/agents/decision-review-agent.md).
+    unassigned_lines_count: int = 0
+    at_risk_stops_count: int = 0
+
     # From Groq: a holistic judgment weighing all of the above, and why.
     overall_score: float
     rationale: str

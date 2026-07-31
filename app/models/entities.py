@@ -186,6 +186,12 @@ class Shipment(TimestampMixin, Base):
     status: Mapped[ShipmentStatus] = mapped_column(
         Enum(ShipmentStatus, name="shipment_status_enum"), nullable=False, default=ShipmentStatus.PLANNED
     )
+    # Populated by the Fleet Assignment Agent (Phase 2) - None if the fleet module
+    # is disabled or this line couldn't be assigned a vehicle.
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("fleet.vehicle_id"), nullable=True)
+    # Which PlanningRun produced this shipment - written atomically alongside that
+    # run's audit row (see app/agents/graph.py::_persist_run).
+    planning_run_id: Mapped[int | None] = mapped_column(ForeignKey("planning_runs.id"), nullable=True)
 
     terminal: Mapped["Terminal"] = relationship()
     store: Mapped["Store"] = relationship()
@@ -196,6 +202,7 @@ class Shipment(TimestampMixin, Base):
         Index("ix_shipments_terminal_store", "terminal_id", "store_id"),
         Index("ix_shipments_status_date", "status", "shipment_date"),
         Index("ix_shipments_product", "product_id"),
+        Index("ix_shipments_planning_run", "planning_run_id"),
     )
 
 
@@ -276,6 +283,10 @@ class PlanningRun(TimestampMixin, Base):
     allocation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cost_optimization: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     constraint_validation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Phase 2 (only populated when Settings.fleet_module_enabled is True):
+    fleet_assignment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    route_planning: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    eta_prediction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     decision_review: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     final_recommendation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

@@ -11,16 +11,27 @@ from app.database.repositories import PlanningRunRepository
 from app.models.entities import (
     DemandHistory,
     DistanceMatrix,
+    Fleet,
     Inventory,
     LocationType,
     PlanningRunStatus,
     Product,
+    Shipment,
     Store,
     Terminal,
+    VehicleStatus,
 )
 from app.schemas.planning import PlanningRequest
 from app.schemas.planning_run import PlanningRunRead
 from tests.conftest import requires_llm_configured as requires_groq_key
+
+
+def _with_fleet_module_enabled(monkeypatch) -> None:
+    real_settings = get_settings()
+    monkeypatch.setattr(
+        "app.agents.graph.get_settings",
+        lambda: real_settings.model_copy(update={"fleet_module_enabled": True}),
+    )
 
 
 async def _seed_minimal(
@@ -29,6 +40,7 @@ async def _seed_minimal(
     store_available_qty: int = 50,
     with_distance_matrix: bool = False,
     store_capacity: int = 100,
+    with_fleet: bool = False,
 ) -> None:
     async with session_factory() as session:
         store = Store(store_name="Graph Store", latitude=1, longitude=1, capacity=store_capacity, priority=1)
@@ -59,6 +71,14 @@ async def _seed_minimal(
             session.add(
                 DistanceMatrix(
                     terminal_id=terminal.terminal_id, store_id=store.store_id, distance_km=25.0, travel_time=0.6
+                )
+            )
+
+        if with_fleet:
+            session.add(
+                Fleet(
+                    terminal_id=terminal.terminal_id, vehicle_type="truck", capacity_weight=1000,
+                    capacity_volume=1000, cost_per_km=5.0, fixed_cost=500.0, status=VehicleStatus.AVAILABLE,
                 )
             )
 
@@ -412,6 +432,79 @@ async def test_run_planning_workflow_cache_miss_when_data_changes(committed_db):
         rows = await PlanningRunRepository(session).find_by_scope_key(request.scope_key())
 
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_build_graph_with_fleet_module_enabled_has_new_nodes(monkeypatch):
+    _with_fleet_module_enabled(monkeypatch)
+
+    graph = build_graph()
+    node_names = set(graph.get_graph().nodes.keys())
+
+    assert {"assign_fleet", "plan_route", "predict_eta"} <= node_names
+
+
+@pytest.mark.asyncio
+async def test_build_graph_with_fleet_module_disabled_has_no_new_nodes():
+    graph = build_graph()
+    node_names = set(graph.get_graph().nodes.keys())
+
+    assert not ({"assign_fleet", "plan_route", "predict_eta"} & node_names)
+
+
+@requires_groq_key
+@pytest.mark.asyncio
+async def test_run_planning_workflow_with_fleet_module_enabled_writes_shipment_rows(committed_db, monkeypatch):
+    _with_fleet_module_enabled(monkeypatch)
+    await _seed_minimal(
+        committed_db, with_demand_history=True, store_available_qty=1,
+        with_distance_matrix=True, with_fleet=True,
+    )
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    result = await run_planning_workflow(request)
+
+    assert result["fleet_assignment"] is not None
+    assert result["route_planning"] is not None
+    assert result["eta_prediction"] is not None
+    assert len(result["trace"]) == 12
+
+    shipment_plan = result["final_recommendation"].shipment_plan
+    assert shipment_plan
+    # A seeded, available vehicle at the terminal means at least one line should
+    # get a real, binding vehicle assignment (not just None throughout).
+    assert any(line.vehicle_id is not None for line in shipment_plan)
+
+    async with committed_db() as session:
+        rows = (
+            await session.execute(select(Shipment).where(Shipment.planning_run_id == result["planning_run_id"]))
+        ).scalars().all()
+
+    assert len(rows) == len(shipment_plan)
+    assert {r.vehicle_id for r in rows} == {line.vehicle_id for line in shipment_plan}
+
+
+@requires_groq_key
+@pytest.mark.asyncio
+async def test_cache_hit_does_not_duplicate_shipment_rows(committed_db, monkeypatch):
+    _with_fleet_module_enabled(monkeypatch)
+    await _seed_minimal(
+        committed_db, with_demand_history=True, store_available_qty=1,
+        with_distance_matrix=True, with_fleet=True,
+    )
+
+    request = PlanningRequest(planning_date=datetime.date.today())
+    result1 = await run_planning_workflow(request)
+    result2 = await run_planning_workflow(request)  # cache hit - no new computation
+
+    assert result2["planning_run_id"] == result1["planning_run_id"]
+
+    async with committed_db() as session:
+        rows = (
+            await session.execute(select(Shipment).where(Shipment.planning_run_id == result1["planning_run_id"]))
+        ).scalars().all()
+
+    assert len(rows) == len(result1["final_recommendation"].shipment_plan)
 
 
 def test_scope_key_differs_by_optimization_objective():

@@ -16,10 +16,13 @@ from app.schemas.allocation import AllocationResult
 from app.schemas.constraint_validation import ConstraintValidationResult
 from app.schemas.cost_optimization import CostOptimizationResult
 from app.schemas.decision_review import DecisionReviewResult
+from app.schemas.eta_prediction import ETAPredictionResult
 from app.schemas.final_recommendation import FinalRecommendation
+from app.schemas.fleet_assignment import FleetAssignmentResult
 from app.schemas.forecast import DemandForecastResult
 from app.schemas.inventory_analysis import InventoryAnalysisResult
 from app.schemas.planning import MasterDataSnapshot
+from app.schemas.route_planning import RoutePlanningResult
 from app.schemas.supply_planning import SupplyPlanningResult
 
 
@@ -58,6 +61,10 @@ class PlanningRunRead(PlanningRunSummary):
     allocation: dict | None
     cost_optimization: dict | None
     constraint_validation: dict | None
+    # Phase 2 (only populated when Settings.fleet_module_enabled was True):
+    fleet_assignment: dict | None
+    route_planning: dict | None
+    eta_prediction: dict | None
     decision_review: dict | None
     final_recommendation: dict | None
 
@@ -81,6 +88,9 @@ class PlanningRunRead(PlanningRunSummary):
             "allocation": (self.allocation, AllocationResult),
             "cost_optimization": (self.cost_optimization, CostOptimizationResult),
             "constraint_validation": (self.constraint_validation, ConstraintValidationResult),
+            "fleet_assignment": (self.fleet_assignment, FleetAssignmentResult),
+            "route_planning": (self.route_planning, RoutePlanningResult),
+            "eta_prediction": (self.eta_prediction, ETAPredictionResult),
             "decision_review": (self.decision_review, DecisionReviewResult),
             "final_recommendation": (self.final_recommendation, FinalRecommendation),
         }

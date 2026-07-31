@@ -26,3 +26,9 @@ delay_penalty_per_hour: 20.0
 # default_lead_time_days (the soft/target threshold Cost Optimization uses for
 # delay penalties). Exceeding this is a rejected plan, not just a cost.
 max_lead_time_days: 5
+
+# Phase 2: Fleet Assignment / Route Planning / ETA Prediction Agent - real-world
+# variability buffer applied to cumulative travel time when predicting a stop's
+# ETA. DistanceMatrix.travel_time is already real hours at an assumed vehicle
+# speed (see scripts/seed_data.py), so no separate speed constant is needed.
+eta_variance_buffer_pct: 0.15

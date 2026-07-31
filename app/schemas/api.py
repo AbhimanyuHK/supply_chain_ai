@@ -14,10 +14,13 @@ from app.schemas.allocation import AllocationResult
 from app.schemas.constraint_validation import ConstraintValidationResult
 from app.schemas.cost_optimization import CostOptimizationResult
 from app.schemas.decision_review import DecisionReviewResult
+from app.schemas.eta_prediction import ETAPredictionResult
 from app.schemas.final_recommendation import FinalRecommendation
+from app.schemas.fleet_assignment import FleetAssignmentResult
 from app.schemas.forecast import DemandForecastResult
 from app.schemas.inventory_analysis import InventoryAnalysisResult
 from app.schemas.planning import MasterDataSnapshot
+from app.schemas.route_planning import RoutePlanningResult
 from app.schemas.supply_planning import SupplyPlanningResult
 
 
@@ -42,6 +45,10 @@ class OptimizeResponse(BaseModel):
     allocation: AllocationResult | None = None
     cost_optimization: CostOptimizationResult | None = None
     constraint_validation: ConstraintValidationResult | None = None
+    # Phase 2 (only populated when Settings.fleet_module_enabled is True):
+    fleet_assignment: FleetAssignmentResult | None = None
+    route_planning: RoutePlanningResult | None = None
+    eta_prediction: ETAPredictionResult | None = None
     decision_review: DecisionReviewResult | None = None
     final_recommendation: FinalRecommendation | None = None
 
@@ -59,6 +66,9 @@ class OptimizeResponse(BaseModel):
             allocation=state.get("allocation"),
             cost_optimization=state.get("cost_optimization"),
             constraint_validation=state.get("constraint_validation"),
+            fleet_assignment=state.get("fleet_assignment"),
+            route_planning=state.get("route_planning"),
+            eta_prediction=state.get("eta_prediction"),
             decision_review=state.get("decision_review"),
             final_recommendation=state.get("final_recommendation"),
         )
