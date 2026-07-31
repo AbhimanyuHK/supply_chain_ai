@@ -1,0 +1,8 @@
+# Documentation build dependencies (Sphinx + MyST Markdown + Read the Docs theme).
+# Deliberately separate from the app's own requirements.txt/requirements-dev.txt/
+# requirements-ui.txt - this is what Read the Docs' build environment installs to
+# build the docs site itself, not to run the application.
+sphinx==7.4.7
+myst-parser==3.0.1
+sphinx-rtd-theme==2.0.0
+sphinx-copybutton==0.5.2

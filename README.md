@@ -4,8 +4,9 @@ Enterprise supply chain planning system: demand forecasting, inventory analysis,
 allocation, cost optimization, and constraint validation, orchestrated by a LangGraph
 agent workflow reasoning through Groq, Gemini, or a local Ollama model (see step 3a) with
 a Streamlit demo dashboard (step 8) and GitHub Actions CI (step 11) testing all three
-engines. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module layout and
-design decisions.
+engines. See the full documentation site under [`docs/`](docs/index.md) (build it locally
+with `sphinx-build`, or host it on Read the Docs) for the module layout, every agent's
+design decisions, and operational guidance.
 
 > **Status: all 10 Phase 1 agents are built** (Modules 1-10) — every agent in the spec's
 > 13-agent list except Phase 2's Fleet Assignment/Route Planning/ETA Prediction/Exception
@@ -421,10 +422,13 @@ Phase 2's fleet/route/ETA agents:
   `/simulate`, `/shipments` endpoints — only routing scaffolding exists, no business logic
   wired to the LangGraph workflow yet
 - A forward-looking promotions/holiday calendar (the Demand Forecast Agent has no such
-  input to work from — see `docs/ARCHITECTURE.md`'s Module 3 section)
+  input to work from — see `docs/agents/demand-forecast-agent.md`)
 - Two of the spec's nine listed constraints (safety stock as a separate check, product
   restrictions) are explicitly out of scope — no distinct/real data to check them against,
-  see `docs/ARCHITECTURE.md`'s Module 8 section
+  see `docs/agents/constraint-validation-agent.md`
+
+See `docs/reference/roadmap.md` for the full, up-to-date list of what's built and what's
+next.
 
 So today you can stand up the database, seed realistic data, and run the entire Phase 1
 pipeline end to end: a scoped master-data snapshot, a real per-store/per-product demand

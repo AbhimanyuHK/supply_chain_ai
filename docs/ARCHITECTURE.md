@@ -1,5 +1,14 @@
 # Architecture — Modules 1-10 (Phase 1 complete) + cross-cutting additions
 
+```{note}
+This is the original, single-page architecture write-up produced while this
+platform was being built module by module. It's kept as a legacy reference,
+but its content has since been reorganized and expanded into the structured
+pages throughout this site — start with {doc}`architecture/overview`,
+{doc}`agents/overview`, and the Cross-Cutting Features section instead for
+anything beyond a quick historical lookup.
+```
+
 ## Layout
 
 ```
@@ -568,7 +577,7 @@ redundant repeat).
   minimize LLM sampling randomness on genuinely fresh computations. The cache above is
   what actually guarantees "same input → same output," not this.
 - **Known limitation, not solved here**: the fingerprint captures data determinism, not
-  code/prompt/settings version - a stale hit could still serve a plan computed under
+  code/prompt/settings version - a stale cache hit could still serve a plan computed under
   different application logic if the app was redeployed between two calls.
 
 ## Scalability at target scale

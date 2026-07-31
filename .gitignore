@@ -14,3 +14,4 @@ htmlcov/
 dist/
 build/
 .streamlit/
+docs/_build/
