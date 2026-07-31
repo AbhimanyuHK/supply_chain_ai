@@ -52,7 +52,7 @@ from app.core.config import get_settings
 from app.core.llm import get_active_model_name
 from app.database.repositories import PlanningRunRepository
 from app.database.session import AsyncSessionLocal
-from app.models.entities import PlanningRunStatus
+from app.models.entities import PlanningRun, PlanningRunStatus
 from app.schemas.planning import PlanningRequest
 from app.schemas.planning_run import PlanningRunRead
 from app.services.fingerprint import compute_data_fingerprint
@@ -106,8 +106,9 @@ async def _persist_run(
     state: PlanningState | None,
     error: Exception | None,
     data_fingerprint: str | None,
-) -> None:
-    """Writes one `PlanningRun` audit row for this invocation.
+) -> PlanningRun | None:
+    """Writes one `PlanningRun` audit row for this invocation, returning the
+    created row (or `None` if persistence itself failed).
 
     On success, every stage's real output is stored (`state[key].model_dump(mode="json")`
     per stage) - except `master_data`, which is stored in full only if
@@ -166,10 +167,12 @@ async def _persist_run(
                 fields[column] = value.model_dump(mode="json")
 
         async with AsyncSessionLocal() as session:
-            await PlanningRunRepository(session).create(**fields)
+            run = await PlanningRunRepository(session).create(**fields)
             await session.commit()
+            return run
     except Exception as exc:  # noqa: BLE001 - persistence must never break a real run
         logger.warning(f"Failed to persist planning run audit row: {exc}")
+        return None
 
 
 async def run_planning_workflow(request: PlanningRequest, *, force_rerun: bool = False) -> PlanningState:
@@ -196,7 +199,9 @@ async def run_planning_workflow(request: PlanningRequest, *, force_rerun: bool =
                 f"Idempotent hit: reusing PlanningRun #{cached.id} for this exact scope, data, "
                 "and reasoning engine - no new computation, no new LLM calls."
             )
-            return cached.to_state_dict()
+            cached_state = cached.to_state_dict()
+            cached_state["planning_run_id"] = cached.id
+            return cached_state
 
     graph = build_graph()
     initial_state: PlanningState = {
@@ -213,7 +218,8 @@ async def run_planning_workflow(request: PlanningRequest, *, force_rerun: bool =
         await _persist_run(request, state=None, error=exc, data_fingerprint=data_fingerprint)
         raise
 
-    await _persist_run(request, state=result, error=None, data_fingerprint=data_fingerprint)
+    run = await _persist_run(request, state=result, error=None, data_fingerprint=data_fingerprint)
+    result["planning_run_id"] = run.id if run is not None else None
     return result
 
 

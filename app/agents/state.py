@@ -27,6 +27,7 @@ from app.schemas.supply_planning import SupplyPlanningResult
 
 class PlanningState(TypedDict, total=False):
     request: PlanningRequest
+    planning_run_id: int | None
     master_data: MasterDataSnapshot
     demand_forecast: DemandForecastResult
     inventory_analysis: InventoryAnalysisResult

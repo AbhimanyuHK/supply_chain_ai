@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers.health import router as health_router
+from app.api.routers.planning import router as planning_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -30,8 +31,11 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(health_router)
-    # Future routers (forecast, inventory, optimize, fleet, route, simulate,
-    # shipments) are registered here as their modules land.
+    app.include_router(planning_router, prefix=settings.api_v1_prefix)
+    # Health stays unprefixed (standard convention: infra/load-balancer probes
+    # expect a stable, unversioned path). Future routers (forecast, inventory,
+    # fleet, route, simulate, shipments - see docs/interfaces/rest-api.md for
+    # why each is still deliberately not built) register under the prefix too.
 
     return app
 
