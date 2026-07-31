@@ -420,9 +420,9 @@ Phase 2's fleet/route/ETA agents:
 
 - Phase 2's Fleet Assignment, Route Planning, and ETA Prediction/Exception Handling agents
   and their graph nodes/edges (gated behind `Settings.fleet_module_enabled`, not started)
-- The `/forecast`, `/inventory` (POST), `/optimize`, `/fleet/assign`, `/route/optimize`,
-  `/simulate`, `/shipments` endpoints — only routing scaffolding exists, no business logic
-  wired to the LangGraph workflow yet
+- The `/forecast`, `/inventory` (POST), `/fleet/assign`, `/route/optimize`, `/simulate`,
+  `/shipments` endpoints (`/optimize` and the `/planning-runs` audit endpoints are built —
+  see `docs/interfaces/rest-api.md`)
 - A forward-looking promotions/holiday calendar (the Demand Forecast Agent has no such
   input to work from — see `docs/agents/demand-forecast-agent.md`)
 - Two of the spec's nine listed constraints (safety stock as a separate check, product
@@ -440,5 +440,6 @@ once, a real fleet-based cost breakdown, a constraint-validated set of scenarios
 automatic replanning if nothing passed), a holistically-scored final selection, and a
 complete final recommendation — shipment plan, business explanation, risk assessment,
 contingency actions, confidence score, expected inventory, expected service level, and
-alternatives. What's not built is Phase 2 (fleet/route optimization) and the REST API
-surface for triggering all this over HTTP instead of the CLI script.
+alternatives. It can also be triggered over HTTP via `POST /api/v1/optimize` (see
+`docs/interfaces/rest-api.md`), not just the CLI script. What's not built is Phase 2
+(fleet/route optimization) and a few REST endpoints beyond that.

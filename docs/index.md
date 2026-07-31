@@ -35,10 +35,10 @@ troubleshooting).
 | **Reasoning engines** | Groq (default), Google Gemini, local Ollama — one-line `.env` switch |
 | **Forecasting** | HuggingFace Chronos (zero-shot time series, real model inference) |
 | **Database** | SQLite (local dev) or PostgreSQL (staging/production) via one connection string |
-| **API layer** | FastAPI (health check today; `/optimize` etc. scaffolded, not yet wired) |
+| **API layer** | FastAPI — `/health`, `POST /optimize`, `GET /planning-runs`(`/{id}`); a few endpoints beyond that still scaffolded |
 | **Demo UI** | Streamlit dashboard with run history and idempotent caching |
 | **Persistence** | Every run is an auditable `PlanningRun` row — full traceability |
-| **CI** | GitHub Actions, one job per reasoning engine |
+| **CI** | GitHub Actions — a hard-blocking lint job, plus one test job per reasoning engine |
 
 ## Where to start
 
