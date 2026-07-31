@@ -22,21 +22,38 @@ validated against the platform's real target scale
 ({doc}`../features/scalability`), and enforced lint standards
 (`ruff`, {doc}`../operations/ci-cd`).
 
-## Phase 2 — not started
+## Phase 2 — complete
 
-The original spec's remaining three agents, gated behind
-`Settings.fleet_module_enabled` (currently `false`):
+The original spec's remaining three agents are built, tested, and wired
+into the graph behind `Settings.fleet_module_enabled` (default `false` —
+opt-in, since they add real complexity and the default 9-node graph
+behavior must stay byte-identical to before Phase 2 existed):
 
-- **Fleet Assignment Agent** — assign specific vehicles to shipment
-  lines ahead of dispatch (today, {doc}`../agents/cost-optimization-agent`
-  only picks a vehicle for *costing* purposes, not a binding assignment).
-- **Route Planning Agent** — multi-stop route optimization across
-  shipments, rather than the current point-to-point terminal→store model.
-- **ETA Prediction / Exception Handling Agent** — predict realistic
-  delivery times accounting for real-world variability, and handle
-  in-flight exceptions (delays, damage, cancellations) against the
-  currently-unused `Shipment` table (see
-  {doc}`../architecture/database-schema`).
+- **{doc}`../agents/fleet-assignment-agent`** — a deterministic
+  first-fit-decreasing bin-pack assigning specific, capacity-respecting
+  vehicles to shipment lines (the real, binding assignment — Cost
+  Optimization's own per-line vehicle pick is only a costing proxy).
+- **{doc}`../agents/route-planning-agent`** — sequences each vehicle's
+  stops nearest-first and computes a corrected, fixed-cost-counted-once
+  route transportation cost (an explicit, documented proxy — no
+  store-to-store distance data exists anywhere in this platform's model).
+- **{doc}`../agents/eta-prediction-agent`** — predicts each stop's
+  delivery ETA and flags real, threshold-based delivery risk. Scoped, per
+  an explicit decision, to **planning-time risk flagging**, not real-time
+  reactive exception handling (that would need genuinely new
+  infrastructure — execution tracking, an event intake endpoint, a
+  background worker — this platform doesn't have).
+
+All three are deterministic (no new LLM calls); the real risk signal ETA
+Prediction computes feeds Final Recommendation's *existing* 4th LLM call
+instead. A completed run now also writes real `Shipment` rows,
+unconditionally, finally activating that previously-unused table — see
+{doc}`../architecture/database-schema`.
+
+**Known limitation, deliberately deferred**: Decision Review gained two
+passthrough metrics (`unassigned_lines_count`, `at_risk_stops_count`) —
+real data captured from the new agents, but not yet fed into its LLM
+prompt or `argmax` selection. A documented follow-up, not an oversight.
 
 ## Known gaps in Phase 1 itself
 
@@ -78,10 +95,12 @@ Documented deliberately, not hidden:
 1. Upgrade `/optimize` to the `BackgroundTasks` + `202` + polling pattern
    if request volume or scope size ever makes the current synchronous
    response too slow (see {doc}`../features/scalability`, Fix 6).
-2. Insert `Shipment` rows from an approved `FinalRecommendation` — the
-   natural bridge from an AI-generated plan to an operational shipment
-   record (see {doc}`../architecture/database-schema`).
+2. Feed Decision Review's new `unassigned_lines_count`/`at_risk_stops_count`
+   passthrough metrics into its LLM prompt and scoring, now that real data
+   for them exists (see {doc}`../agents/decision-review-agent`).
 3. Add RPM-aware pacing to the Supply Planning batch scheduler if Gemini
    (or another tightly-capped provider) becomes a primary path rather
    than a fallback.
-4. Begin Phase 2 (Fleet Assignment first — the other two build on it).
+4. Consider real store-to-store distance data if Route Planning's
+   nearest-first/sum-of-legs proxy ever needs to become true multi-stop
+   routing (see {doc}`../agents/route-planning-agent`).

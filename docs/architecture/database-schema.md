@@ -109,15 +109,18 @@ from these stores" as its primary access pattern.
 | `quantity` | int | `CHECK quantity > 0` |
 | `shipment_date` | date | |
 | `status` | enum | `planned`, `confirmed`, `in_transit`, `delivered`, `cancelled`, `exception`. |
+| `vehicle_id` | FK → fleet, nullable | Populated by {doc}`../agents/fleet-assignment-agent` (Phase 2) — `NULL` when the fleet module is disabled, or if no vehicle could be assigned. |
+| `planning_run_id` | FK → planning_runs, nullable, indexed | Which run produced this shipment. |
 
 ```{note}
-This table is currently **unused** — defined per the original spec but
-nothing writes to it yet. It models an individual *confirmed* operational
-shipment with a real-world lifecycle, a different concept from
-`planning_runs` below (which is an AI-decision audit log, not an
-operational record). The natural integration point: once a `FinalRecommendation`
-is approved, insert one `Shipment` row per `ShipmentPlanLine`, linked back
-to the `PlanningRun` that produced it.
+This table is no longer unused: every successful `run_planning_workflow()`
+call writes one `Shipment` row per `ShipmentPlanLine`, unconditionally —
+a deliberate business decision (this table should reflect what the
+platform actually recommended, not wait on some future "approve this
+plan" step that doesn't exist). It models an individual *confirmed*
+operational shipment with a real-world lifecycle, a different concept
+from `planning_runs` below (which is an AI-decision audit log). See
+{doc}`../features/persistence-and-audit-trail`.
 ```
 
 ## `planning_runs`
@@ -143,7 +146,7 @@ rationale. One row per `run_planning_workflow()` invocation.
 | `request_payload` | JSON, nullable | The full `PlanningRequest`, verbatim. |
 | `master_data_row_counts` | JSON, nullable | Populated instead of the full snapshot when `Settings.persist_full_master_data_snapshot=False`. |
 | `master_data_snapshot` | JSON, nullable | |
-| `demand_forecast`, `inventory_analysis`, `supply_planning`, `allocation`, `cost_optimization`, `constraint_validation`, `decision_review`, `final_recommendation` | JSON, nullable | One column per pipeline stage — each stage's Pydantic result, `.model_dump(mode="json")`. |
+| `demand_forecast`, `inventory_analysis`, `supply_planning`, `allocation`, `cost_optimization`, `constraint_validation`, `fleet_assignment`, `route_planning`, `eta_prediction`, `decision_review`, `final_recommendation` | JSON, nullable | One column per pipeline stage — each stage's Pydantic result, `.model_dump(mode="json")`. The three Phase 2 columns are `NULL` whenever `Settings.fleet_module_enabled` was `False` for that run. |
 
 ```{important}
 Every stage column is nullable because a **failed** run has no partial data
@@ -161,13 +164,17 @@ call for the idempotency cache check.
 
 ## Migrations
 
-Three migrations to date, in order:
+Four migrations to date, in order:
 
 1. `0001_initial_schema` — the eight core tables.
 2. `0002_planning_runs` — adds `planning_runs`.
 3. `0003_planning_run_idempotency_and_objective` — adds `data_fingerprint`,
    `optimization_objective`, `master_data_row_counts`, and the composite
    cache-lookup index to `planning_runs`.
+4. `0004_fleet_route_eta_and_shipment_links` — adds `shipments.vehicle_id`/
+   `planning_run_id` (via Alembic batch mode — SQLite can't `ALTER` a
+   foreign-key constraint onto an existing column directly) and
+   `planning_runs.fleet_assignment`/`route_planning`/`eta_prediction`.
 
 ```bash
 venv\Scripts\python.exe -m alembic upgrade head

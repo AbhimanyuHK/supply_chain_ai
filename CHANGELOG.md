@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-31
+
+Phase 2 complete: all three of the original spec's remaining agents, gated
+behind `Settings.fleet_module_enabled` (default `false`).
+
+### Added
+
+- **Fleet Assignment Agent**: deterministic first-fit-decreasing bin-pack
+  assigning specific, capacity-respecting vehicles to shipment lines — the
+  real, binding assignment (Cost Optimization's own per-line vehicle pick
+  remains a costing proxy only).
+- **Route Planning Agent**: sequences each vehicle's stops nearest-first
+  and computes a route-level transportation cost that correctly counts
+  fixed cost once per vehicle instead of once per line. Documented proxy:
+  no store-to-store distance data exists anywhere in this platform's
+  model, so this is nearest-terminal-distance-first sequencing, not true
+  multi-stop routing.
+- **ETA Prediction / Exception Handling Agent**: predicts each stop's
+  delivery ETA and flags real, threshold-based delivery risk (lead-time
+  breach, vehicle capacity exceeded, or prior replanning). Scoped to
+  planning-time risk flagging, not real-time reactive exception handling.
+- **Real `Shipment` rows**, finally activating the previously-unused
+  table: every successful run now writes one row per shipment plan line,
+  unconditionally, linked back to its `PlanningRun`.
+- **Decision Review passthrough metrics**: `unassigned_lines_count` and
+  `at_risk_stops_count` on `ScenarioEvaluation` — real data captured, not
+  yet fed into the LLM prompt or scoring (a documented follow-up).
+- New migration `0004_fleet_route_eta_and_shipment_links`: `shipments`
+  gains `vehicle_id`/`planning_run_id`; `planning_runs` gains
+  `fleet_assignment`/`route_planning`/`eta_prediction`.
+- 3 new agent doc pages, updated architecture/roadmap/database-schema docs.
+
+### Notes
+
+- No new LLM calls — all three new agents are deterministic. The real
+  risk signal ETA Prediction computes is threaded into Final
+  Recommendation's existing 4th LLM call instead of a new one.
+- `Settings.fleet_module_enabled` defaults to `false`: the 9-node graph
+  behavior is byte-identical to before Phase 2 for every existing caller.
+
 ## [1.1.0] - 2026-07-31
 
 ### Added

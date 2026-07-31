@@ -17,7 +17,12 @@ verified without a live LLM call:
   exact `(terminal, store, product)` candidate — not a fresh LLM call per
   line. If no matching Supply Planning candidate exists (shouldn't
   normally happen), it falls back to a generic sentence rather than
-  fabricating a specific-sounding one.
+  fabricating a specific-sounding one. When `Settings.fleet_module_enabled`
+  is `True`, each line also gets `vehicle_id`/`route_sequence`/
+  `predicted_eta_hours` from {doc}`fleet-assignment-agent`/
+  {doc}`route-planning-agent`/{doc}`eta-prediction-agent` (all `None`
+  otherwise) — this `vehicle_id` is the authoritative, binding one,
+  distinct from Cost Optimization's own per-line proxy pick.
 - **`_compute_expected_inventory`** — plain arithmetic: terminals decrease
   by shipped quantity, stores increase, against the master data
   snapshot's current stock.
@@ -39,7 +44,14 @@ fall back to a constraint-violating plan, and counts of unresolved
 violations/unfulfillable shortages. The prompt explicitly instructs the
 confidence score to drop noticeably when any of those red flags are
 present — a run with real problems should never read as confidently as a
-clean one.
+clean one. When the fleet module is enabled, the prompt also names how
+many shipment lines {doc}`eta-prediction-agent` flagged at elevated
+delivery risk — one more real signal for the same narrative and
+confidence score, rather than a competing 5th LLM call.
+
+This agent also writes real `Shipment` rows — see
+{doc}`../features/persistence-and-audit-trail` and
+{doc}`../architecture/database-schema` for where and how.
 
 `_build_prompt` also names which
 {doc}`optimization objective <../features/cost-objectives>` drove the

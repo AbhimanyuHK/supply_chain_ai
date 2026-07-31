@@ -41,6 +41,18 @@ Constraint Validation filtered out invalid options — genuinely different
 (and more refined) inputs than what's available here, plus three entirely
 new dimensions (balance, distance, risk) Allocation never saw.
 
+## Phase 2 passthrough metrics (real data, not yet weighed)
+
+When `Settings.fleet_module_enabled` is `True`, `ScenarioEvaluation` also
+carries `unassigned_lines_count` (from {doc}`fleet-assignment-agent`) and
+`at_risk_stops_count` (from {doc}`eta-prediction-agent`) for each scenario
+— both default to `0` when the fleet module is off. This is a deliberate,
+documented follow-up: the data is captured and visible in the output/audit
+trail, but it is **not yet** fed into the LLM prompt's weighing text or
+the `argmax` selection above. A scenario with many unassigned lines or
+high delivery risk isn't penalized here today — see
+{doc}`../reference/roadmap` for the planned next step.
+
 ## Fallback case
 
 If nothing passed Constraint Validation (replanning attempts exhausted,

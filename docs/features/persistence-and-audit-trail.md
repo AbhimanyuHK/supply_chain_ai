@@ -59,6 +59,34 @@ mask the actual planning result. The function's return value is
 byte-identical to before this feature existed, so no caller needed to
 change when it shipped.
 
+## Writing real `Shipment` rows (Phase 2)
+
+On a successful run with a non-empty `final_recommendation.shipment_plan`,
+`_persist_run` also writes one real `Shipment` row per `ShipmentPlanLine`
+— unconditionally, on **every** successful run, not gated behind
+`Settings.fleet_module_enabled` or some future "approve this plan" step
+(a deliberate business decision — this table should reflect what the
+platform actually recommended). Each row is linked back via
+`planning_run_id`, with `vehicle_id` from
+{doc}`../agents/fleet-assignment-agent` (`None` when the fleet module is
+disabled, or if a line couldn't be assigned a vehicle).
+
+```{important}
+This happens **inside the same transaction** as the `PlanningRun` audit
+row itself, atomically — a deliberate trade-off, not an oversight. A
+Shipment-insert failure now rolls back the whole transaction, meaning a
+successful plan could end up with no audit row at all. This matches the
+existing "never break the real run" philosophy (the caller's actual
+result is still returned either way) but is a new failure mode worth
+knowing about.
+```
+
+This only ever runs on a genuinely fresh computation — the idempotency
+cache-hit path (see {doc}`idempotency-and-caching`) returns before
+`_persist_run` is ever called, so a repeat call for the same scope never
+writes a second, duplicate batch of Shipment rows for a `PlanningRun`
+that already has them.
+
 ## Reconstructing a historical run
 
 `PlanningRunRead.to_state_dict()` (`app/schemas/planning_run.py`)

@@ -1,11 +1,12 @@
 # The Planning Workflow
 
-The whole platform is one LangGraph `StateGraph` with nine nodes and a single
-conditional feedback loop, defined in `app/agents/graph.py`. This page
-describes the graph shape and the state that flows through it; each node's
-own logic has a dedicated page under {doc}`../agents/overview`.
+The whole platform is one LangGraph `StateGraph`, defined in
+`app/agents/graph.py`. Its shape depends on `Settings.fleet_module_enabled`
+(default `False`): **nine nodes** with the flag off, **twelve** with it on.
+This page describes both shapes and the state that flows through them;
+each node's own logic has a dedicated page under {doc}`../agents/overview`.
 
-## The graph
+## The graph — `Settings.fleet_module_enabled=False` (default)
 
 ```text
 START
@@ -23,14 +24,34 @@ START
   → END
 ```
 
-Built by `build_graph()` and compiled once (no checkpointer configured — see
-{doc}`../features/persistence-and-audit-trail` for what that trade-off
-means for failed runs). Every edge except the one leaving Constraint
-Validation is a plain, unconditional edge; that one is
-`graph.add_conditional_edges(..., route_after_validation)`, which returns
-either `"recommend_final"` (via a synthetic pass-through) or
-`"plan_supply"` depending on the validation outcome — see
-{doc}`../agents/constraint-validation-agent` for the exact decision tree.
+## The graph — `Settings.fleet_module_enabled=True`
+
+Identical up through Constraint Validation; its "valid" branch retargets
+to three new Phase 2 nodes instead of going straight to Decision Review:
+
+```text
+  ...
+  → validate_constraints ─────────────┐
+      │ (valid, or replanning exhausted)  (replan)
+      ↓                                    │
+  → assign_fleet                           │
+  → plan_route                             │
+  → predict_eta                            │
+  → review_decision  (same as above) ──────┘
+  → recommend_final
+  → END
+```
+
+Built by `build_graph()` and compiled once per call (no checkpointer
+configured — see {doc}`../features/persistence-and-audit-trail` for what
+that trade-off means for failed runs). Every edge except the one leaving
+Constraint Validation is a plain, unconditional edge; that one is
+`graph.add_conditional_edges(..., route_after_validation)`, whose `"end"`
+branch targets `"assign_fleet"` when the fleet module is enabled or
+`"review_decision"` when it isn't — see
+{doc}`../agents/constraint-validation-agent` for the exact decision tree,
+and {doc}`../agents/fleet-assignment-agent` for why the flag exists and
+what the three new nodes do.
 
 ## `PlanningState`
 
@@ -48,6 +69,9 @@ LangGraph merges into the running state:
 | `allocation` | Allocation | `AllocationResult` |
 | `cost_optimization` | Cost Optimization | `CostOptimizationResult` |
 | `constraint_validation` | Constraint Validation | `ConstraintValidationResult` |
+| `fleet_assignment` | Fleet Assignment (Phase 2 only) | `FleetAssignmentResult \| None` |
+| `route_planning` | Route Planning (Phase 2 only) | `RoutePlanningResult \| None` |
+| `eta_prediction` | ETA Prediction (Phase 2 only) | `ETAPredictionResult \| None` |
 | `decision_review` | Decision Review | `DecisionReviewResult` |
 | `final_recommendation` | Final Recommendation | `FinalRecommendation` |
 | `trace` | Every node, appended | `list[str]` |
@@ -56,8 +80,9 @@ LangGraph merges into the running state:
 
 `trace` and `errors` use LangGraph's `operator.add` reducer, so each node
 *appends* its own line rather than overwriting what the previous node wrote
-— a full run ends with exactly nine trace lines (one per node), which is
-what `tests/test_agents_graph.py` asserts on the happy path.
+— a full run ends with exactly nine trace lines with the fleet module off,
+or twelve with it on, which is what `tests/test_agents_graph.py` asserts
+on the happy path (both cases have their own test).
 
 ## `run_planning_workflow()`
 
@@ -87,9 +112,15 @@ Before touching the graph at all, it:
 
 ## LLM calls across the graph
 
-Only four of the nine nodes ever call a reasoning engine — the rest are
-pure deterministic computation against real data, following the
-{doc}`overview`'s "LLM judges, code decides" principle:
+Only four nodes ever call a reasoning engine — the rest are pure
+deterministic computation against real data, following the
+{doc}`overview`'s "LLM judges, code decides" principle. This is unchanged
+by Phase 2: all three new nodes are deterministic too (see
+{doc}`../agents/fleet-assignment-agent`,
+{doc}`../agents/route-planning-agent`,
+{doc}`../agents/eta-prediction-agent`) — the real risk signal ETA
+Prediction computes is threaded into Final Recommendation's *existing*
+4th call rather than adding a 5th.
 
 | Node | Calls LLM? | What it asks the LLM to do |
 |---|---|---|
@@ -100,6 +131,9 @@ pure deterministic computation against real data, following the
 | **Allocation** | Yes | Rank three already-computed scenarios with rationale |
 | Cost Optimization | No | — |
 | Constraint Validation | No | — |
+| Fleet Assignment (Phase 2) | No | — |
+| Route Planning (Phase 2) | No | — |
+| ETA Prediction (Phase 2) | No | — |
 | **Decision Review** | Yes | Score each valid scenario 0-100 across six real metrics |
 | **Final Recommendation** | Yes | Synthesize a business explanation, risk assessment, and confidence score |
 

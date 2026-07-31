@@ -1,10 +1,10 @@
 # Agents Overview
 
-Nine agents, one per {doc}`planning workflow <../architecture/planning-workflow>`
-node, implementing all ten of the original spec's Phase 1 agents (Master
-Data counts as the first). Phase 2's three remaining agents — Fleet
-Assignment, Route Planning, ETA Prediction/Exception Handling — are gated
-behind `Settings.fleet_module_enabled` and not yet built.
+Ten Phase 1 agents (Master Data counts as the first), plus three Phase 2
+agents — Fleet Assignment, Route Planning, ETA Prediction/Exception
+Handling — gated behind `Settings.fleet_module_enabled` (default `False`).
+See {doc}`../architecture/planning-workflow` for the full graph, both
+with the flag off (9 nodes) and on (12 nodes).
 
 ## The "LLM judges, code decides" split, agent by agent
 
@@ -17,6 +17,9 @@ behind `Settings.fleet_module_enabled` and not yet built.
 | {doc}`allocation-agent` | Yes | Rank three finished scenarios with a rationale | The three allocation strategies themselves (stock conservation math) |
 | {doc}`cost-optimization-agent` | No | — | Everything (real fleet/product cost arithmetic + selection) |
 | {doc}`constraint-validation-agent` | No | — | Everything (a decision tree against real data) |
+| {doc}`fleet-assignment-agent` (Phase 2) | No | — | Everything (deterministic bin-packing) |
+| {doc}`route-planning-agent` (Phase 2) | No | — | Everything (nearest-first sequencing, route cost) |
+| {doc}`eta-prediction-agent` (Phase 2) | No | — | Everything (real thresholds, not a prose judgment) |
 | {doc}`decision-review-agent` | Yes | Score each valid scenario 0-100 across six real metrics | The six metrics themselves, and the final `argmax` selection |
 | {doc}`final-recommendation-agent` | Yes | Synthesize a business explanation, risk assessment, confidence score | Shipment plan, expected inventory, alternatives |
 
@@ -53,6 +56,9 @@ supply-planning-agent
 allocation-agent
 cost-optimization-agent
 constraint-validation-agent
+fleet-assignment-agent
+route-planning-agent
+eta-prediction-agent
 decision-review-agent
 final-recommendation-agent
 ```
