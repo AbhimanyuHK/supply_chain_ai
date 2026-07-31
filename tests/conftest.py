@@ -20,10 +20,9 @@ from app.core.config import get_settings
 
 get_settings.cache_clear()
 
-from app.database import session as db_session_module  # noqa: E402
-from app.database.base import Base  # noqa: E402
-from app.models import entities  # noqa: E402,F401 (registers all tables on Base.metadata)
-
+from app.database import session as db_session_module
+from app.database.base import Base
+from app.models import entities  # noqa: F401 (registers all tables on Base.metadata)
 
 requires_llm_configured = pytest.mark.skipif(
     not (

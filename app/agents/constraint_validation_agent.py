@@ -54,7 +54,11 @@ from app.agents.state import PlanningState
 from app.core.config import get_settings
 from app.models.entities import LocationType
 from app.schemas.allocation import AllocationScenario
-from app.schemas.constraint_validation import ConstraintValidationResult, ConstraintViolation, ScenarioValidation
+from app.schemas.constraint_validation import (
+    ConstraintValidationResult,
+    ConstraintViolation,
+    ScenarioValidation,
+)
 from app.schemas.cost_optimization import ScenarioCostSummary
 from app.schemas.inventory_analysis import InventoryAnalysisRecord
 from app.schemas.planning import MasterDataSnapshot

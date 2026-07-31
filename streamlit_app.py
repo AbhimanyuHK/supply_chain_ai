@@ -21,19 +21,19 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from app.agents.graph import run_planning_workflow  # noqa: E402
-from app.core.config import get_settings  # noqa: E402
-from app.core.llm import get_active_model_name, reset_llm_client_caches  # noqa: E402
-from app.database.repositories import (  # noqa: E402
+from app.agents.graph import run_planning_workflow
+from app.core.config import get_settings
+from app.core.llm import get_active_model_name, reset_llm_client_caches
+from app.database.repositories import (
     PlanningRunRepository,
     ProductRepository,
     StoreRepository,
     TerminalRepository,
 )
-from app.database.session import AsyncSessionLocal, engine  # noqa: E402
-from app.models.entities import PlanningRunStatus  # noqa: E402
-from app.schemas.planning import PlanningRequest  # noqa: E402
-from app.schemas.planning_run import PlanningRunRead  # noqa: E402
+from app.database.session import AsyncSessionLocal, engine
+from app.models.entities import PlanningRunStatus
+from app.schemas.planning import PlanningRequest
+from app.schemas.planning_run import PlanningRunRead
 
 st.set_page_config(page_title="Supply Chain Planning Demo", layout="wide")
 
@@ -340,7 +340,7 @@ def main() -> None:
 
     try:
         store_options, product_options, terminal_count = load_scope_options()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a DB hiccup must show a message, not crash the rerun
         st.error(f"Could not load data from the database: {exc}\n\nRun `alembic upgrade head` and "
                  "`scripts/seed_data.py` first.")
         return
@@ -383,7 +383,7 @@ def main() -> None:
     # forces a fresh computation regardless of what's already there.
     try:
         matching_runs = find_matching_runs(current_request)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a DB hiccup must not block rendering the rest of the sidebar
         matching_runs = []
 
     if matching_runs:
@@ -401,7 +401,7 @@ def main() -> None:
     with st.sidebar.expander("🕘 Run history (all scopes)"):
         try:
             recent_runs = list_recent_runs(limit=20)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a DB hiccup must not block rendering the rest of the sidebar
             recent_runs = []
         if recent_runs:
             recent_options = {
@@ -437,11 +437,11 @@ def main() -> None:
                 st.session_state["result_source"] = (
                     "live",
                     None,
-                    datetime.datetime.now(),
+                    datetime.datetime.now(datetime.timezone.utc),
                     settings.llm_provider,
                     get_active_model_name(),
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - surface any failure in the UI, never crash the rerun
                 st.session_state["result"] = None
                 st.session_state["error"] = str(exc)
 

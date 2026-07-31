@@ -3,10 +3,10 @@ import datetime
 import pytest
 
 from app.agents.allocation_agent import (
-    _ShortageInfo,
     _balanced_lines,
     _priority_first_lines,
     _score_first_lines,
+    _ShortageInfo,
     allocate_node,
 )
 from app.core.business_rules import BusinessRules

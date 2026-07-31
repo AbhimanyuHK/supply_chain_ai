@@ -1,21 +1,21 @@
 from app.models.entities import (
+    DemandHistory,
+    DistanceMatrix,
+    Fleet,
+    Inventory,
+    Product,
+    Shipment,
     Store,
     Terminal,
-    Product,
-    Inventory,
-    DemandHistory,
-    Fleet,
-    Shipment,
-    DistanceMatrix,
 )
 
 __all__ = [
+    "DemandHistory",
+    "DistanceMatrix",
+    "Fleet",
+    "Inventory",
+    "Product",
+    "Shipment",
     "Store",
     "Terminal",
-    "Product",
-    "Inventory",
-    "DemandHistory",
-    "Fleet",
-    "Shipment",
-    "DistanceMatrix",
 ]

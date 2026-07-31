@@ -1,3 +1,5 @@
+# ruff: noqa: DTZ001 - naive datetimes here are just distinguishable test-fixture
+# timestamps for fingerprint-hash comparisons, not real instants that need tz-awareness.
 import datetime
 
 from app.core.business_rules import BusinessRules

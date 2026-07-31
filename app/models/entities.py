@@ -8,7 +8,8 @@ is indexed.
 """
 
 import enum
-from datetime import date as date_, datetime
+from datetime import date as date_
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,

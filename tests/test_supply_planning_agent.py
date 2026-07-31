@@ -4,11 +4,20 @@ import re
 
 import pytest
 
-import app.agents.supply_planning_agent as supply_planning_agent
-from app.agents.supply_planning_agent import _LLMBatchPlanningResponse, _LLMCandidate, _LLMShortagePlan, plan_supply_node
+from app.agents import supply_planning_agent
+from app.agents.supply_planning_agent import (
+    _LLMBatchPlanningResponse,
+    _LLMCandidate,
+    _LLMShortagePlan,
+    plan_supply_node,
+)
 from app.core.business_rules import BusinessRules
 from app.models.entities import LocationType
-from app.schemas.constraint_validation import ConstraintValidationResult, ConstraintViolation, ScenarioValidation
+from app.schemas.constraint_validation import (
+    ConstraintValidationResult,
+    ConstraintViolation,
+    ScenarioValidation,
+)
 from app.schemas.distance import DistanceMatrixRead
 from app.schemas.inventory import InventoryRead
 from app.schemas.inventory_analysis import InventoryAnalysisRecord, InventoryAnalysisResult

@@ -3,7 +3,12 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import ConnectionPoolEntry
 
 from app.core.config import get_settings
@@ -61,5 +66,5 @@ async def check_database_connection() -> bool:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health check must report degraded, never raise
         return False

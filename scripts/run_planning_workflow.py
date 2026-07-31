@@ -24,8 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.agents.graph import run_planning_workflow  # noqa: E402
-from app.schemas.planning import PlanningRequest  # noqa: E402
+from app.agents.graph import run_planning_workflow
+from app.schemas.planning import PlanningRequest
 
 
 def parse_args() -> argparse.Namespace:

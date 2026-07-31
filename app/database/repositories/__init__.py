@@ -8,12 +8,12 @@ from app.database.repositories.store_repository import StoreRepository
 from app.database.repositories.terminal_repository import TerminalRepository
 
 __all__ = [
+    "DemandHistoryRepository",
+    "DistanceMatrixRepository",
+    "FleetRepository",
+    "InventoryRepository",
+    "PlanningRunRepository",
+    "ProductRepository",
     "StoreRepository",
     "TerminalRepository",
-    "ProductRepository",
-    "InventoryRepository",
-    "DemandHistoryRepository",
-    "FleetRepository",
-    "DistanceMatrixRepository",
-    "PlanningRunRepository",
 ]

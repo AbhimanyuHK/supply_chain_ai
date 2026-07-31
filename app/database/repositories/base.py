@@ -6,7 +6,8 @@ pulled from a global, so repositories are trivially testable against any
 session (including a per-test rollback transaction).
 """
 
-from typing import Generic, Iterator, Sequence, TypeVar
+from collections.abc import Iterator, Sequence
+from typing import Generic, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

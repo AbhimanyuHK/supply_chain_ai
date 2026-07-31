@@ -1,4 +1,4 @@
-from typing import Sequence
+from collections.abc import Sequence
 
 from app.database.repositories.base import BaseRepository
 from app.models.entities import Product

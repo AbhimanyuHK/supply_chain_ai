@@ -26,9 +26,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.database.base import Base  # noqa: E402
-from app.database.session import AsyncSessionLocal, engine  # noqa: E402
-from app.models.entities import (  # noqa: E402
+from app.database.base import Base
+from app.database.session import AsyncSessionLocal, engine
+from app.models.entities import (
     DemandHistory,
     DistanceMatrix,
     Fleet,
@@ -44,39 +44,39 @@ from app.models.entities import (  # noqa: E402
 RNG_SEED = 42
 
 STORES = [
-    dict(store_name="Bangalore Central", latitude=12.9716, longitude=77.5946, capacity=8000, priority=1),
-    dict(store_name="Chennai T Nagar", latitude=13.0418, longitude=80.2341, capacity=6000, priority=2),
-    dict(store_name="Mumbai Andheri", latitude=19.1197, longitude=72.8468, capacity=10000, priority=1),
-    dict(store_name="Delhi Connaught Place", latitude=28.6315, longitude=77.2167, capacity=9000, priority=1),
-    dict(store_name="Hyderabad Hitech City", latitude=17.4483, longitude=78.3915, capacity=7000, priority=2),
-    dict(store_name="Pune Viman Nagar", latitude=18.5679, longitude=73.9143, capacity=5000, priority=3),
+    {"store_name": "Bangalore Central", "latitude": 12.9716, "longitude": 77.5946, "capacity": 8000, "priority": 1},
+    {"store_name": "Chennai T Nagar", "latitude": 13.0418, "longitude": 80.2341, "capacity": 6000, "priority": 2},
+    {"store_name": "Mumbai Andheri", "latitude": 19.1197, "longitude": 72.8468, "capacity": 10000, "priority": 1},
+    {"store_name": "Delhi Connaught Place", "latitude": 28.6315, "longitude": 77.2167, "capacity": 9000, "priority": 1},
+    {"store_name": "Hyderabad Hitech City", "latitude": 17.4483, "longitude": 78.3915, "capacity": 7000, "priority": 2},
+    {"store_name": "Pune Viman Nagar", "latitude": 18.5679, "longitude": 73.9143, "capacity": 5000, "priority": 3},
 ]
 
 TERMINALS = [
-    dict(terminal_name="South Zone Terminal - Bangalore", latitude=12.8452, longitude=77.6602, capacity=200_000),
-    dict(terminal_name="West Zone Terminal - Mumbai", latitude=19.0760, longitude=72.8777, capacity=250_000),
-    dict(terminal_name="North Zone Terminal - Delhi", latitude=28.7041, longitude=77.1025, capacity=220_000),
+    {"terminal_name": "South Zone Terminal - Bangalore", "latitude": 12.8452, "longitude": 77.6602, "capacity": 200_000},
+    {"terminal_name": "West Zone Terminal - Mumbai", "latitude": 19.0760, "longitude": 72.8777, "capacity": 250_000},
+    {"terminal_name": "North Zone Terminal - Delhi", "latitude": 28.7041, "longitude": 77.1025, "capacity": 220_000},
 ]
 
 PRODUCTS = [
-    dict(sku="SKU-ELEC-001", name="Smartphone X12", category="Smartphones", weight=0.20, volume=0.0010, cost=45000),
-    dict(sku="SKU-ELEC-002", name="Laptop Pro 15", category="Laptops", weight=1.80, volume=0.0060, cost=75000),
-    dict(sku="SKU-ELEC-003", name="LED TV 55-inch", category="Televisions", weight=15.00, volume=0.2500, cost=55000),
-    dict(sku="SKU-ELEC-004", name="Tablet Air", category="Tablets", weight=0.50, volume=0.0020, cost=28000),
-    dict(sku="SKU-ELEC-005", name="Smartwatch S3", category="Wearables", weight=0.05, volume=0.0002, cost=12000),
-    dict(sku="SKU-ELEC-006", name="Bluetooth Speaker Mini", category="Audio", weight=0.60, volume=0.0030, cost=3500),
-    dict(sku="SKU-ELEC-007", name="Wireless Earbuds Pro", category="Audio", weight=0.05, volume=0.0001, cost=6500),
-    dict(sku="SKU-ELEC-008", name="Gaming Console X", category="Gaming", weight=3.50, volume=0.0200, cost=42000),
-    dict(sku="SKU-ELEC-009", name="Digital Camera DSLR", category="Cameras", weight=0.80, volume=0.0040, cost=38000),
-    dict(sku="SKU-ELEC-010", name="Home Theater System 5.1", category="Audio", weight=12.00, volume=0.1500, cost=25000),
-    dict(sku="SKU-ELEC-011", name="Power Bank 20000mAh", category="Accessories", weight=0.40, volume=0.0010, cost=1800),
-    dict(sku="SKU-ELEC-012", name="WiFi Router AX3000", category="Networking", weight=0.70, volume=0.0030, cost=5500),
+    {"sku": "SKU-ELEC-001", "name": "Smartphone X12", "category": "Smartphones", "weight": 0.20, "volume": 0.0010, "cost": 45000},
+    {"sku": "SKU-ELEC-002", "name": "Laptop Pro 15", "category": "Laptops", "weight": 1.80, "volume": 0.0060, "cost": 75000},
+    {"sku": "SKU-ELEC-003", "name": "LED TV 55-inch", "category": "Televisions", "weight": 15.00, "volume": 0.2500, "cost": 55000},
+    {"sku": "SKU-ELEC-004", "name": "Tablet Air", "category": "Tablets", "weight": 0.50, "volume": 0.0020, "cost": 28000},
+    {"sku": "SKU-ELEC-005", "name": "Smartwatch S3", "category": "Wearables", "weight": 0.05, "volume": 0.0002, "cost": 12000},
+    {"sku": "SKU-ELEC-006", "name": "Bluetooth Speaker Mini", "category": "Audio", "weight": 0.60, "volume": 0.0030, "cost": 3500},
+    {"sku": "SKU-ELEC-007", "name": "Wireless Earbuds Pro", "category": "Audio", "weight": 0.05, "volume": 0.0001, "cost": 6500},
+    {"sku": "SKU-ELEC-008", "name": "Gaming Console X", "category": "Gaming", "weight": 3.50, "volume": 0.0200, "cost": 42000},
+    {"sku": "SKU-ELEC-009", "name": "Digital Camera DSLR", "category": "Cameras", "weight": 0.80, "volume": 0.0040, "cost": 38000},
+    {"sku": "SKU-ELEC-010", "name": "Home Theater System 5.1", "category": "Audio", "weight": 12.00, "volume": 0.1500, "cost": 25000},
+    {"sku": "SKU-ELEC-011", "name": "Power Bank 20000mAh", "category": "Accessories", "weight": 0.40, "volume": 0.0010, "cost": 1800},
+    {"sku": "SKU-ELEC-012", "name": "WiFi Router AX3000", "category": "Networking", "weight": 0.70, "volume": 0.0030, "cost": 5500},
 ]
 
 VEHICLE_TYPES = [
-    dict(vehicle_type="tempo_1t", capacity_weight=1000, capacity_volume=6, cost_per_km=8.0, fixed_cost=300),
-    dict(vehicle_type="truck_5t", capacity_weight=5000, capacity_volume=20, cost_per_km=15.0, fixed_cost=800),
-    dict(vehicle_type="truck_10t", capacity_weight=10000, capacity_volume=40, cost_per_km=22.0, fixed_cost=1500),
+    {"vehicle_type": "tempo_1t", "capacity_weight": 1000, "capacity_volume": 6, "cost_per_km": 8.0, "fixed_cost": 300},
+    {"vehicle_type": "truck_5t", "capacity_weight": 5000, "capacity_volume": 20, "cost_per_km": 15.0, "fixed_cost": 800},
+    {"vehicle_type": "truck_10t", "capacity_weight": 10000, "capacity_volume": 40, "cost_per_km": 22.0, "fixed_cost": 1500},
 ]
 
 DEMAND_HISTORY_DAYS = 30

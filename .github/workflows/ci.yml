@@ -7,7 +7,8 @@ name: CI
 # for local dev). Every LLM-calling test skips itself gracefully when none
 # of these are configured (see tests/conftest.py::requires_llm_configured),
 # so this workflow never fails just because a secret is missing - it just
-# skips fewer/more tests.
+# skips fewer/more tests. A 4th, hard-blocking `lint` job runs ruff - unlike
+# the test-* jobs, this one is expected to always pass with zero findings.
 on:
   push:
     branches: [master]
@@ -16,6 +17,26 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run ruff
+        run: ruff check .
+
   test-groq:
     name: Tests (Groq)
     runs-on: ubuntu-latest

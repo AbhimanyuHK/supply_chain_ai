@@ -5,7 +5,6 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from alembic import context
-
 from app.core.config import get_settings
 from app.database.base import Base
 from app.models import entities  # noqa: F401  (registers all models on Base.metadata)
