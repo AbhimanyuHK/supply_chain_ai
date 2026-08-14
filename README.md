@@ -29,6 +29,11 @@ design decisions, and operational guidance.
 
 ---
 
+<img width="1536" height="1024" alt="ChatGPT Image Aug 14, 2026, 01_27_58 PM" src="https://github.com/user-attachments/assets/0c6600e1-4e18-4a43-a0e0-13c774d08675" />
+
+
+---
+
 ## 1. Prerequisites
 
 - Python 3.12 recommended (3.10+ works for this module; some later modules may need 3.12).
