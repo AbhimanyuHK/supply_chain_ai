@@ -59,3 +59,12 @@ POST /api/v1/decisions/events/recover-stale?timeout_minutes=60 is operator authe
 Operators should verify the prior execution has stopped before retrying. Recovery never automatically retries an uncertain operation.
 Conditional event completion updates protect against late workers overwriting a recovered status.
 Apply alembic upgrade head before using these features. Autonomous queue processing remains pending.
+
+
+## Opt-in replanning worker
+Migration 0008 stores an optional planning_request on each event. The event intake API validates non-empty store_ids and product_ids before persisting that scope. Legacy events without a scope remain manual-only.
+Set ENABLE_REPLANNING_WORKER=1 and run python -m app.services.replanning_worker to process up to 10 scoped queued events in one pass. An external scheduler may invoke this command periodically; it does not start automatically.
+The worker uses database compare-and-swap claims and an attempt counter to fence late results. It never creates shipments or dispatches vehicles. Failed events require operator review and explicit retry.
+Manual event execution also refuses requests that differ from the event's persisted scope.
+Apply alembic upgrade head before using the worker. Full queue supervision, lease heartbeats, metrics and end-to-end integration tests remain pending.
+CI remains restricted to master; dev changes are not automatically tested.
