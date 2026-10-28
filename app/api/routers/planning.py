@@ -83,3 +83,47 @@ async def get_planning_benchmark(run_id: int, db: AsyncSession = Depends(get_db)
         }
         for metric in benchmark_scenarios(allocation.scenarios, valid)
     ]
+
+
+@router.get("/planning-runs/{run_id}/stress-test")
+async def get_planning_stress_test(
+    run_id: int, multipliers: str = "0.8,1.0,1.2",
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Run transparent what-if demand stress tests against persisted allocations."""
+    from fastapi import HTTPException
+    from app.schemas.allocation import AllocationResult
+    from app.schemas.inventory_analysis import InventoryAnalysisResult
+    from app.services.uncertainty_simulation import stress_test
+
+    row = await PlanningRunRepository(db).get_by_id(run_id)
+    if row is None:
+        raise NotFoundError(f"PlanningRun {run_id} not found", details={"run_id": run_id})
+    if not row.allocation or not row.inventory_analysis:
+        return {"run_id": run_id, "scenarios": []}
+    try:
+        values = tuple(float(value.strip()) for value in multipliers.split(","))
+    except ValueError as exc:
+        raise HTTPException(422, "multipliers must be comma-separated numbers") from exc
+    if not values or len(values) > 10 or any(not (0 < value <= 5) for value in values):
+        raise HTTPException(422, "Supply 1-10 demand multipliers between 0 and 5")
+    allocation = AllocationResult.model_validate(row.allocation)
+    shortages = InventoryAnalysisResult.model_validate(row.inventory_analysis).shortages
+    return {
+        "run_id": run_id,
+        "note": "User-supplied stress multipliers; not calibrated forecast quantiles.",
+        "scenarios": [
+            {
+                "strategy": scenario.strategy,
+                "stress": [
+                    {
+                        "demand_multiplier": item.demand_multiplier,
+                        "service_level": item.service_level,
+                        "uncovered_units": item.uncovered_units,
+                    }
+                    for item in stress_test(scenario, shortages, values)
+                ],
+            }
+            for scenario in allocation.scenarios
+        ],
+    }
