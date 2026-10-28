@@ -73,7 +73,33 @@ def _validate_scenario(
     business_rules = snapshot.business_rules
     violations: list[ConstraintViolation] = []
 
+    # Validate demand conservation and master-data references independently.
+    known_stores = {store.store_id for store in snapshot.stores}
+    known_terminals = {terminal.terminal_id for terminal in snapshot.terminals}
+    known_products = {product.product_id for product in snapshot.products}
+    valid_lanes = {(d.terminal_id, d.store_id) for d in snapshot.distance_matrix}
+    shortage_by_key = {
+        (r.location_id, r.product_id): r.shortage_qty
+        for r in inventory_records if r.location_type == LocationType.STORE
+        and r.shortage_qty > 0
+    }
+    incoming_by_product: dict[tuple[int, int], int] = defaultdict(int)
     for line in scenario.lines:
+        incoming_by_product[(line.store_id, line.product_id)] += line.quantity
+        if (line.store_id not in known_stores or line.terminal_id not in known_terminals
+                or line.product_id not in known_products
+                or (line.terminal_id, line.store_id) not in valid_lanes):
+            violations.append(ConstraintViolation(
+                constraint="invalid_lane", terminal_id=line.terminal_id,
+                store_id=line.store_id, product_id=line.product_id,
+                message="Unknown store, terminal, product, or terminal-to-store lane.",
+            ))
+        if line.quantity <= 0:
+            violations.append(ConstraintViolation(
+                constraint="invalid_quantity", terminal_id=line.terminal_id,
+                store_id=line.store_id, product_id=line.product_id,
+                message="Shipment quantity must be positive.",
+            ))
         if line.quantity > business_rules.max_shipment_qty_per_product:
             violations.append(
                 ConstraintViolation(
@@ -111,6 +137,14 @@ def _validate_scenario(
                     ),
                 )
             )
+
+    for (store_id, product_id), quantity in incoming_by_product.items():
+        if quantity > shortage_by_key.get((store_id, product_id), 0):
+            violations.append(ConstraintViolation(
+                constraint="demand_overallocation", store_id=store_id,
+                product_id=product_id,
+                message=f"Incoming quantity {quantity} exceeds recorded shortage.",
+            ))
 
     terminal_available = {
         (inv.location_id, inv.product_id): inv.available_qty
