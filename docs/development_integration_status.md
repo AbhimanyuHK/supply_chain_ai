@@ -31,3 +31,10 @@ Local test execution is blocked because this environment cannot resolve github.c
 - The endpoint requires matching approved strategy and independently validated final strategy, refuses invalid fallback plans, and creates PLANNED shipment records only (not dispatch).
 - A repeat request is rejected when shipments already exist for the planning run. This is a guard, not a full cross-database exactly-once guarantee; SQLite lacks SELECT FOR UPDATE semantics. Production requires a unique dispatch/request key or transaction-level lock.
 - CI push and pull request triggers remain restricted to master. Do not enable dev CI until requested.
+
+
+## Shipment creation concurrency hardening
+Migration 0006_shipment_creation_claims adds a unique planning_run_id claim.
+The approved-shipment endpoint inserts the claim and shipment lines in one transaction.
+Concurrent duplicate claims return HTTP 409. Apply alembic upgrade head before using the endpoint.
+This does not reserve inventory, dispatch vehicles, or guarantee exactly-once downstream fulfillment.
