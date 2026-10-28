@@ -1,5 +1,5 @@
 """Unit tests for opt-in replanning worker bounds and scope requirements."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
