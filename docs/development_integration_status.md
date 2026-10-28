@@ -23,3 +23,11 @@ Local test execution is blocked because this environment cannot resolve github.c
 - LLM fleet assignments must pass the independent weight/volume/terminal/availability validator and now replace the deterministic baseline only when they reduce the vehicle count or eliminate unassigned lines.
 - Explicit event execution requires non-null store_ids and product_ids to avoid accidentally replanning the entire supply chain from a loosely scoped event.
 - CI runs on dev branch pushes. Check the GitHub Actions run conclusion; a workflow marked in_progress does not establish passing tests.
+
+
+## Human approval gates shipment creation
+- Planning runs no longer write Shipment rows, regardless of the legacy auto_create_shipment_records setting.
+- After approving a valid plan, operators may call POST /api/v1/decisions/planning-runs/{run_id}/create-shipments with X-Operator-Token.
+- The endpoint requires matching approved strategy and independently validated final strategy, refuses invalid fallback plans, and creates PLANNED shipment records only (not dispatch).
+- A repeat request is rejected when shipments already exist for the planning run. This is a guard, not a full cross-database exactly-once guarantee; SQLite lacks SELECT FOR UPDATE semantics. Production requires a unique dispatch/request key or transaction-level lock.
+- CI push and pull request triggers remain restricted to master. Do not enable dev CI until requested.
