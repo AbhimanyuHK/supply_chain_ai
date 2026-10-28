@@ -9,7 +9,7 @@ import secrets
 from datetime import timezone
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import get_db
 from app.models.entities import PlanApproval, PlanningRun, ReplanningEvent
@@ -108,9 +108,15 @@ async def execute_replanning_event(
         raise HTTPException(404, "Event not found")
     if row.action != "queued":
         raise HTTPException(409, "Event is not queued")
-    # Flush the claim before starting the workflow. Production multi-worker
-    # dispatch requires a transactional claim/lease mechanism.
-    row.action = "processing"
+    # Compare-and-swap claim prevents two workers processing the same event.
+    claimed = await db.execute(
+        update(ReplanningEvent)
+        .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "queued")
+        .values(action="processing")
+    )
+    if claimed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(409, "Event was claimed by another worker")
     await db.commit()
     try:
         result = await run_planning_workflow(body.request, force_rerun=True)
