@@ -262,3 +262,33 @@ async def create_approved_shipments(run_id: int, db: AsyncSession = Depends(get_
         ))
     await db.flush()
     return {"run_id": run_id, "status": "planned", "shipments_created": len(lines)}
+
+
+@router.post("/events/recover-stale", dependencies=[Depends(require_operator)])
+async def recover_stale_events(
+    timeout_minutes: int = 60,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark timed-out processing events failed for explicit operator retry.
+
+    Never silently rerun an uncertain operation: the previous worker may still
+    be executing. Inspect its planning run before using /retry.
+    """
+    if not 5 <= timeout_minutes <= 10080:
+        raise HTTPException(422, "timeout_minutes must be between 5 and 10080")
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+    changed = await db.execute(
+        update(ReplanningEvent)
+        .where(
+            ReplanningEvent.action == "processing",
+            ReplanningEvent.processing_started_at.is_not(None),
+            ReplanningEvent.processing_started_at < cutoff,
+        )
+        .values(
+            action="failed",
+            processing_started_at=None,
+            last_error="Processing lease expired; inspect prior execution before retry",
+        )
+    )
+    await db.flush()
+    return {"marked_failed": changed.rowcount, "timeout_minutes": timeout_minutes}
