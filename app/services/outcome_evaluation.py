@@ -2,7 +2,6 @@
 
 Coverage is empirical, not a guarantee of future confidence.
 """
-from collections import defaultdict
 from math import ceil, isfinite
 
 
