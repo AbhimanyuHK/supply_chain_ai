@@ -10,6 +10,7 @@ from datetime import timezone
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import get_db
 from app.models.entities import PlanApproval, PlanningRun, ReplanningEvent
@@ -227,7 +228,11 @@ async def create_approved_shipments(run_id: int, db: AsyncSession = Depends(get_
     # A UNIQUE planning_run_id claim makes concurrent requests conflict at the DB level.
     # Claim and shipment inserts share the same transaction.
     db.add(ShipmentCreationClaim(planning_run_id=run_id))
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "Shipment creation already claimed") from exc
     for line in lines:
         db.add(Shipment(
             terminal_id=line["terminal_id"],
