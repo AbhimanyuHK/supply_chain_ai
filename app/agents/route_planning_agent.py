@@ -30,6 +30,8 @@ one a route-level operational figure.
 from loguru import logger
 
 from app.agents.state import PlanningState
+from app.agents.llm_route_optimizer import propose_stop_order
+from app.core.config import get_settings
 from app.schemas.fleet_assignment import VehicleLoad
 from app.schemas.planning import MasterDataSnapshot
 from app.schemas.route_planning import (
@@ -40,7 +42,7 @@ from app.schemas.route_planning import (
 )
 
 
-def _route_vehicle(vehicle_load: VehicleLoad, snapshot: MasterDataSnapshot) -> VehicleRoute:
+def _route_vehicle(vehicle_load: VehicleLoad, snapshot: MasterDataSnapshot, stop_order=None) -> VehicleRoute:
     vehicle = next(f for f in snapshot.fleet if f.vehicle_id == vehicle_load.vehicle_id)
     distance_by_store = {
         d.store_id: (float(d.distance_km), float(d.travel_time))
@@ -52,6 +54,11 @@ def _route_vehicle(vehicle_load: VehicleLoad, snapshot: MasterDataSnapshot) -> V
         {line.store_id for line in vehicle_load.lines},
         key=lambda store_id: distance_by_store.get(store_id, (0.0, 0.0))[0],
     )
+
+    if stop_order is not None:
+        if len(stop_order) != len(distinct_store_ids) or set(stop_order) != set(distinct_store_ids):
+            raise ValueError('Invalid LLM route stop set')
+        distinct_store_ids = stop_order
 
     stops: list[RouteStop] = []
     total_distance = 0.0
@@ -83,13 +90,28 @@ async def plan_route_node(state: PlanningState) -> dict:
         return {"route_planning": result, "trace": [message]}
 
     snapshot = state["master_data"]
-    scenario_routes = [
-        ScenarioRoutePlan(
-            strategy=scenario_assignment.strategy,
-            vehicle_routes=[_route_vehicle(load, snapshot) for load in scenario_assignment.vehicle_loads],
-        )
-        for scenario_assignment in fleet_assignment.scenario_assignments
-    ]
+    scenario_routes = []
+    for scenario_assignment in fleet_assignment.scenario_assignments:
+        routes = []
+        for load in scenario_assignment.vehicle_loads:
+            order = None
+            if get_settings().llm_native_optimizer_enabled:
+                legs = {
+                    d.store_id: (float(d.distance_km), float(d.travel_time))
+                    for d in snapshot.distance_matrix if d.terminal_id == load.terminal_id
+                }
+                stores = sorted({line.store_id for line in load.lines})
+                try:
+                    order = await propose_stop_order(
+                        terminal_id=load.terminal_id, stores=stores,
+                        distance_by_store={store: legs.get(store) for store in stores},
+                    )
+                except Exception as exc:
+                    logger.warning("LLM route sequencing failed; using baseline: {}", exc)
+            routes.append(_route_vehicle(load, snapshot, stop_order=order))
+        scenario_routes.append(ScenarioRoutePlan(
+            strategy=scenario_assignment.strategy, vehicle_routes=routes
+        ))
 
     total_vehicles = sum(len(sr.vehicle_routes) for sr in scenario_routes)
     message = f"Planned routes for {len(scenario_routes)} scenario(s) across {total_vehicles} vehicle(s)"
