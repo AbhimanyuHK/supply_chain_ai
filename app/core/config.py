@@ -154,6 +154,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    llm_native_optimizer_enabled: bool = Field(
+        default=False,
+        description="Opt in to LLM-generated allocation proposals and iterative search.",
+    )
+    llm_optimizer_iterations: int = Field(
+        default=3, ge=1, le=20,
+        description="Maximum LLM allocation improvement attempts per planning run.",
+    )
+
     max_replanning_attempts: int = Field(
         default=2,
         ge=0,
