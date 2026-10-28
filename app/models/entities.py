@@ -320,6 +320,7 @@ class ReplanningEvent(TimestampMixin, Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     magnitude: Mapped[float] = mapped_column(Numeric(12, 5), nullable=False)
     action: Mapped[str] = mapped_column(String(32), nullable=False)
+    planning_request: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempt_count: Mapped[int] = mapped_column(nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
