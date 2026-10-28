@@ -43,3 +43,13 @@ The experimental solver now calls a separate structured-output Critic Agent betw
 - `tests/test_supply_chain_decision_services.py`: targeted tests for these modules.
 
 **Integration warning:** The new services are isolated primitives, not yet connected to persistent APIs, scheduling, authentication, or Streamlit. The broader roadmap is NOT fully delivered. Tests have been committed but not executed in this environment.
+
+
+## New integrations
+- Read-only Control Tower: `pip install -r requirements-control-tower.txt` then `streamlit run control_tower.py` while FastAPI runs locally.
+- API endpoint: `GET /api/v1/planning-runs/{run_id}/benchmark` compares persisted allocation candidates.
+- LLM fleet planner: `app/agents/llm_fleet_optimizer.py` proposes vehicle assignments and independently validates aggregate weight, volume, availability and source-terminal consistency. **It is not yet wired into the fleet LangGraph node.**
+- Shipment creation is now disabled by default via `AUTO_CREATE_SHIPMENT_RECORDS=false`. This is a behavioral change from master; explicitly review legacy integrations. Even with the flag enabled, no shipment rows are created for plans with unresolved violations.
+
+## Release gate
+Do not merge until tests, lint, API smoke tests, database migrations and actual provider calls are verified. Approval decisions and event triggers remain pure functions without persistence/authentication/queue wiring. The Control Tower is read-only. Full LLM routing, calibrated demand uncertainty, and multi-run memory remain unfinished.
