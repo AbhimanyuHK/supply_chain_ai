@@ -52,3 +52,34 @@ async def get_planning_run(run_id: int, db: AsyncSession = Depends(get_db)) -> P
     if row is None:
         raise NotFoundError(f"PlanningRun {run_id} not found", details={"run_id": run_id})
     return PlanningRunRead.model_validate(row)
+
+
+@router.get("/planning-runs/{run_id}/benchmark")
+async def get_planning_benchmark(run_id: int, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Compare LLM and heuristic candidates using persisted run data."""
+    from app.schemas.allocation import AllocationResult
+    from app.schemas.constraint_validation import ConstraintValidationResult
+    from app.services.optimization_evaluator import benchmark_scenarios
+
+    row = await PlanningRunRepository(db).get_by_id(run_id)
+    if row is None:
+        raise NotFoundError(f"PlanningRun {run_id} not found", details={"run_id": run_id})
+    if not row.allocation:
+        return []
+    allocation = AllocationResult.model_validate(row.allocation)
+    validation = ConstraintValidationResult.model_validate(row.constraint_validation) if row.constraint_validation else None
+    valid = {
+        v.strategy for v in validation.scenario_validations if v.is_valid
+    } if validation else set()
+    return [
+        {
+            "strategy": metric.strategy,
+            "source": metric.source,
+            "feasible": metric.feasible,
+            "fulfillment_rate": metric.fulfillment_rate,
+            "high_priority_fulfilled": metric.high_priority_fulfilled,
+            "estimated_cost": metric.estimated_cost,
+            "cost_delta_vs_baseline": metric.cost_delta_vs_baseline,
+        }
+        for metric in benchmark_scenarios(allocation.scenarios, valid)
+    ]
