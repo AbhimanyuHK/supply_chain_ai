@@ -6,7 +6,7 @@ the actual run with a scope-specific PlanningRequest.
 """
 import os
 import secrets
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
@@ -118,7 +118,8 @@ async def execute_replanning_event(
     claimed = await db.execute(
         update(ReplanningEvent)
         .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "queued")
-        .values(action="processing")
+        .values(action="processing", processing_started_at=datetime.now(timezone.utc),
+                attempt_count=ReplanningEvent.attempt_count + 1, last_error=None)
     )
     if claimed.rowcount != 1:
         await db.rollback()
@@ -126,15 +127,21 @@ async def execute_replanning_event(
     await db.commit()
     try:
         result = await run_planning_workflow(body.request, force_rerun=True)
-    except Exception:
+    except Exception as exc:
         row.action = "failed"
+        row.processing_started_at = None
+        row.last_error = str(exc)[:2000]
         await db.commit()
         raise
     if result.get("errors") or not result.get("planning_run_id"):
         row.action = "failed"
+        row.processing_started_at = None
+        row.last_error = "Planning workflow returned errors or no persisted run"
         await db.commit()
         raise HTTPException(502, "Replanning did not complete successfully")
     row.action = "processed"
+    row.processing_started_at = None
+    row.planning_run_id = result["planning_run_id"]
     await db.commit()
     return {"event_id": event_id, "action": row.action,
             "planning_run_id": result.get("planning_run_id")}
@@ -170,6 +177,9 @@ async def list_events(
             "entity_id": item.entity_id,
             "occurred_at": item.occurred_at.isoformat(),
             "action": item.action,
+            "attempt_count": item.attempt_count,
+            "planning_run_id": item.planning_run_id,
+            "processing_started_at": item.processing_started_at.isoformat() if item.processing_started_at else None,
         }
         for item in rows
     ]
