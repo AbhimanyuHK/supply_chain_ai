@@ -11,7 +11,7 @@ from app.api.routers.decisions import require_operator
 from app.database.session import get_db
 from app.models.entities import PlanningOutcome, PlanningRun
 from app.services.outcome_evaluation import (
-    conformal_margin, interval_diagnostics, outcome_summary,
+    conformal_margin, heldout_interval_evaluation, interval_diagnostics, outcome_summary,
 )
 
 router = APIRouter(prefix="/outcomes", tags=["outcomes"], dependencies=[Depends(require_operator)])
@@ -85,4 +85,35 @@ async def evaluate_outcomes(run_id: int, alpha: float = 0.1, db: AsyncSession = 
         "run_id": run_id, "outcome": summary, "forecast": diagnostics,
         "conformal_alpha": alpha, "calibration_margin": margin,
         "note": "In-sample diagnostic only. Use held-out historical runs for valid forward calibration.",
+    }
+
+
+@router.get("/planning-runs/{run_id}/heldout-evaluation")
+async def heldout_evaluation(
+    run_id: int, cutoff_date: date, alpha: float = 0.1,
+    db: AsyncSession = Depends(get_db),
+):
+    """Strict date split; does not claim prospective validation."""
+    if not 0 < alpha < 1:
+        raise HTTPException(422, "alpha must be between 0 and 1")
+    run = await db.get(PlanningRun, run_id)
+    if run is None:
+        raise HTTPException(404, "Planning run not found")
+    rows = (await db.scalars(
+        select(PlanningOutcome).where(PlanningOutcome.planning_run_id == run_id)
+    )).all()
+    observations = [
+        {"store_id": r.store_id, "product_id": r.product_id,
+         "observation_date": r.observation_date.isoformat(),
+         "actual_demand_qty": float(r.actual_demand_qty)}
+        for r in rows
+    ]
+    report = heldout_interval_evaluation(
+        (run.demand_forecast or {}).get("forecasts", []),
+        observations, cutoff_date=cutoff_date.isoformat(), alpha=alpha,
+    )
+    return {
+        "run_id": run_id, "cutoff_date": cutoff_date.isoformat(),
+        **report,
+        "warning": "Retrospective date split only. Verify prediction timestamps and model training windows before claiming prospective coverage.",
     }
