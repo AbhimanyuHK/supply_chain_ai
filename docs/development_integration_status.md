@@ -68,3 +68,15 @@ The worker uses database compare-and-swap claims and an attempt counter to fence
 Manual event execution also refuses requests that differ from the event's persisted scope.
 Apply alembic upgrade head before using the worker. Full queue supervision, lease heartbeats, metrics and end-to-end integration tests remain pending.
 CI remains restricted to master; dev changes are not automatically tested.
+
+
+## Outcome feedback, calibration, security and monitoring (migration 0009)
+Apply alembic upgrade head before using these endpoints.
+- POST /api/v1/outcomes records observed store/product/day demand, fulfilled units and actual cost. external_reference is unique for duplicate protection.
+- GET /api/v1/outcomes/planning-runs/{run_id}/evaluation reports observed service level, actual cost, forecast MAE, empirical interval coverage and a finite-sample interval-miss quantile. These are descriptive, in-sample diagnostics, NOT independently validated confidence guarantees. Use disjoint held-out calibration and evaluation periods before deploying calibrated bounds in optimization.
+- GET /api/v1/operations/summary exposes authenticated counts of planning runs, replanning states and outcome records.
+- Control Tower displays outcome evaluation and operational monitoring.
+- POST approval now requires X-Approver-Token with SUPPLY_CHAIN_APPROVER_TOKEN. POST create-shipments requires X-Fulfillment-Token with SUPPLY_CHAIN_FULFILLMENT_TOKEN. Both fail closed when missing. Operator API access still requires X-Operator-Token. This is basic credential separation, NOT identity-aware RBAC, OIDC or a complete audit authorization system.
+- New focused tests cover numerical calibration, feedback summaries and credential separation. They have NOT been run.
+- CI remains master-only as requested; master has not been changed.
+Outstanding: end-to-end database integration tests, worker crash recovery tests, independent held-out calibration, production identity and role integration, real tracing/alerts, and verified migrations.
