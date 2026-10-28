@@ -45,3 +45,9 @@ This does not reserve inventory, dispatch vehicles, or guarantee exactly-once do
 - Event execution rejects omitted or empty store_ids/product_ids and marks a run failed if the workflow returns errors or no planning_run_id.
 - Added focused approval safety regression tests (not yet executed).
 - Automatic CI is restricted to master; dev commits must not trigger CI.
+
+
+## Control Tower visibility and focused tests
+- Control Tower now displays the selected planning run's approval decision and the latest 50 replanning events, read-only.
+- Added regression coverage for a successful matching approval and the unique shipment claim ORM metadata.
+- These changes are committed to dev only and have not been validated by CI.
