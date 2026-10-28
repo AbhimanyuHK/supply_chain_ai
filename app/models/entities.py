@@ -320,3 +320,9 @@ class ReplanningEvent(TimestampMixin, Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     magnitude: Mapped[float] = mapped_column(Numeric(12, 5), nullable=False)
     action: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class ShipmentCreationClaim(TimestampMixin, Base):
+    __tablename__ = "shipment_creation_claims"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    planning_run_id: Mapped[int] = mapped_column(ForeignKey("planning_runs.id"), unique=True, nullable=False)
