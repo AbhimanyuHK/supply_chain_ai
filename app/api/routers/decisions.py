@@ -118,7 +118,16 @@ async def ingest_event(event: SupplyChainEvent, db: AsyncSession = Depends(get_d
         occurred_at=occurred, magnitude=event.magnitude, action=action,
         planning_request=scope,
     ))
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        duplicate = await db.scalar(
+            select(ReplanningEvent).where(ReplanningEvent.event_id == event.event_id)
+        )
+        if duplicate is None:
+            raise HTTPException(409, "Event write conflict") from exc
+        return {"event_id": event.event_id, "action": duplicate.action, "duplicate": True}
     return {"event_id": event.event_id, "action": action, "duplicate": False}
 
 
