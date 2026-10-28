@@ -11,10 +11,12 @@ API = os.getenv("CONTROL_TOWER_API_URL", "http://localhost:8000").rstrip("/")
 st.set_page_config(page_title="Supply Chain AI Control Tower", layout="wide")
 st.title("Supply Chain AI Control Tower")
 st.caption("Read-only planning oversight. No automatic shipment dispatch.")
+operator_token = st.sidebar.text_input("Operator API token", type="password")
 
-@st.cache_data(ttl=30)
 def get_json(path):
-    response = requests.get(API + path, timeout=20)
+    if not operator_token:
+        raise requests.RequestException("Enter your operator API token in the sidebar")
+    response = requests.get(API + path, timeout=20, headers={"X-Operator-Token": operator_token})
     response.raise_for_status()
     return response.json()
 
