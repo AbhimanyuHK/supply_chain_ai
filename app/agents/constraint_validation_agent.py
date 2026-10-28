@@ -259,40 +259,36 @@ async def validate_constraints_node(state: PlanningState) -> dict:
     replanning_attempts = state.get("replanning_attempts", 0)
     settings = get_settings()
 
-    if recommended_validation is not None and recommended_validation.is_valid:
-        final_strategy = recommended
-        unresolved: list[ConstraintViolation] = []
-        replanning_triggered = False
-        message = f"'{recommended}' passed constraint validation; carrying it forward."
-    else:
-        valid_alternatives = [v for v in scenario_validations if v.is_valid and v.strategy != recommended]
-        if valid_alternatives:
-            best_alternative = min(valid_alternatives, key=lambda v: cost_lookup.get(v.strategy, float("inf")))
-            final_strategy = best_alternative.strategy
-            unresolved = []
-            replanning_triggered = False
-            violation_count = len(recommended_validation.violations) if recommended_validation else 0
-            message = (
-                f"'{recommended}' failed validation ({violation_count} violation(s)); switched to valid "
-                f"alternative '{final_strategy}' instead."
-            )
-        elif replanning_attempts < settings.max_replanning_attempts:
-            final_strategy = recommended
-            unresolved = recommended_validation.violations if recommended_validation else []
-            replanning_triggered = True
-            message = (
-                f"No scenario passed validation; sending {len(unresolved)} violation(s) back to Supply "
-                f"Planning for replanning (attempt {replanning_attempts + 1}/{settings.max_replanning_attempts})."
-            )
+    valid_scenarios = [v for v in scenario_validations if v.is_valid]
+    if valid_scenarios:
+        # Select from feasible candidates only. Preserve the request objective.
+        if state["request"].optimization_objective == "maximize_service_level":
+            best = max(valid_scenarios, key=lambda v: (
+                cost_by_strategy[v.strategy].fulfillment_rate,
+                -cost_lookup[v.strategy],
+            ))
         else:
-            final_strategy = recommended
-            unresolved = recommended_validation.violations if recommended_validation else []
-            replanning_triggered = False
-            message = (
-                f"No scenario passed validation after {settings.max_replanning_attempts} replanning "
-                f"attempt(s); proceeding best-effort with '{final_strategy}' ({len(unresolved)} unresolved "
-                "violation(s))."
-            )
+            priority_complete = [
+                v for v in valid_scenarios
+                if cost_by_strategy[v.strategy].fully_satisfies_high_priority
+            ]
+            pool = priority_complete or valid_scenarios
+            best = min(pool, key=lambda v: cost_lookup[v.strategy])
+        final_strategy = best.strategy
+        unresolved = []
+        replanning_triggered = False
+        message = f"Selected feasible strategy '{final_strategy}' for requested objective."
+    elif replanning_attempts < settings.max_replanning_attempts:
+        final_strategy = None
+        unresolved = recommended_validation.violations if recommended_validation else []
+        replanning_triggered = True
+        message = "No feasible scenario; requesting another supply-planning attempt."
+    else:
+        # Never silently mark an infeasible shipment plan as dispatch-ready.
+        final_strategy = None
+        unresolved = recommended_validation.violations if recommended_validation else []
+        replanning_triggered = False
+        message = "No feasible scenario after bounded retries; manual review required."
 
     result = ConstraintValidationResult(
         scenario_validations=scenario_validations,
