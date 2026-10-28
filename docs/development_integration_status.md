@@ -38,3 +38,10 @@ Migration 0006_shipment_creation_claims adds a unique planning_run_id claim.
 The approved-shipment endpoint inserts the claim and shipment lines in one transaction.
 Concurrent duplicate claims return HTTP 409. Apply alembic upgrade head before using the endpoint.
 This does not reserve inventory, dispatch vehicles, or guarantee exactly-once downstream fulfillment.
+
+
+## Additional approval and replanning safety
+- Approval rejects a recommendation whose selected_strategy differs from the independently validated final_strategy, and any recommendation flagged fell_back_to_invalid_scenario.
+- Event execution rejects omitted or empty store_ids/product_ids and marks a run failed if the workflow returns errors or no planning_run_id.
+- Added focused approval safety regression tests (not yet executed).
+- Automatic CI is restricted to master; dev commits must not trigger CI.
