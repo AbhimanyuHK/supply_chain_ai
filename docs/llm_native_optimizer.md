@@ -53,3 +53,12 @@ The experimental solver now calls a separate structured-output Critic Agent betw
 
 ## Release gate
 Do not merge until tests, lint, API smoke tests, database migrations and actual provider calls are verified. Approval decisions and event triggers remain pure functions without persistence/authentication/queue wiring. The Control Tower is read-only. Full LLM routing, calibrated demand uncertainty, and multi-run memory remain unfinished.
+
+
+## Latest LangGraph integration
+When both `LLM_NATIVE_OPTIMIZER_ENABLED=true` and `FLEET_MODULE_ENABLED=true`, Fleet Assignment now attempts an LLM-proposed full vehicle mapping. Independent Python checks vehicle availability, terminal match, total weight and volume; on invalid output or model failure, the deterministic packing algorithm is used. Route Planning likewise attempts LLM stop sequencing with exact stop-set validation, falling back to nearest-terminal-distance order.
+
+The route's distance and cost remain **terminal-leg proxies**, not actual multi-stop road-network optimization, until inter-store distances are added. An updated fingerprint now includes optimizer settings and a manual planner revision to reduce stale cache reuse. Increment the revision on any future prompt/algorithm change.
+
+## Operational status
+These modules are committed but untested in the current execution environment: outbound git access could not resolve github.com. Do not treat code committed to GitHub as verified deployment. Approvals, event triggers, calibrated uncertainty, persistent optimization feedback, and fully secured APIs still need end-to-end integration.
