@@ -10,6 +10,7 @@ from typing import Callable
 from pydantic import BaseModel, Field
 
 from app.core.llm import get_chat_model
+from app.agents.critic_agent import critique_plan
 from app.schemas.allocation import AllocationLine, AllocationScenario
 from app.schemas.supply_planning import CandidatePlan
 
@@ -85,6 +86,8 @@ async def generate_llm_scenarios(
     best = None
     accepted = []
     feedback = "Generate a diverse initial feasible plan."
+    seen = set()
+    stagnant = 0
     for iteration in range(iterations):
         prompt = (
             "You are the supply-chain allocation SOLVER, not a ranking assistant. "
@@ -100,20 +103,38 @@ async def generate_llm_scenarios(
         if lines is None:
             feedback = "Your previous allocation violated stock, demand, or lane constraints. Repair it."
             continue
+        fingerprint = tuple(sorted((x.terminal_id, x.store_id, x.product_id, x.quantity) for x in lines))
+        if fingerprint in seen:
+            feedback = "Duplicate candidate: change allocation quantities or sourcing lanes."
+            stagnant += 1
+            if stagnant >= 2:
+                break
+            continue
+        seen.add(fingerprint)
         scenario = summarize(f"llm_native_{iteration + 1}", lines, shortages, high_priority_store_ids)
         scenario.rationale = proposed.rationale
         accepted.append(scenario)
         if best is None or _objective_score(scenario, objective) > _objective_score(best, objective):
             best = scenario
+            stagnant = 0
             feedback = (
                 f"Best feasible: fulfillment={best.fulfillment_rate:.4f}, "
                 f"estimated_cost={best.total_estimated_cost:.2f}. "
                 "Find a different feasible allocation with a better objective."
             )
         else:
+            stagnant += 1
             feedback = (
                 f"Last proposal did not improve best feasible allocation "
                 f"(fulfillment={best.fulfillment_rate:.4f}, cost={best.total_estimated_cost:.2f}). "
                 "Try different lanes or quantities."
             )
+        if iteration + 1 < iterations:
+            critique = await critique_plan(
+                objective=objective, scenario=scenario, demand=demand,
+                stock=list(terminal_stock.items()), lanes=lanes,
+            )
+            feedback += f" Independent critic improvements: {critique.improvements}. Risks: {critique.weaknesses}."
+        if stagnant >= 2:
+            break
     return accepted
