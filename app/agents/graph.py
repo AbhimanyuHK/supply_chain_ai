@@ -61,7 +61,7 @@ from app.agents.state import PlanningState
 from app.agents.supply_planning_agent import plan_supply_node
 from app.core.config import get_settings
 from app.core.llm import get_active_model_name
-from app.database.repositories import PlanningRunRepository, ShipmentRepository
+from app.database.repositories import PlanningRunRepository
 from app.database.session import AsyncSessionLocal
 from app.models.entities import PlanningRun, PlanningRunStatus
 from app.schemas.planning import PlanningRequest
@@ -162,21 +162,7 @@ async def _persist_run(
     exception propagates with no partial state to persist (see `PlanningRun`'s
     docstring).
 
-    On success, also writes one real `Shipment` row per `ShipmentPlanLine` in
-    the final recommendation - every successful run, unconditionally (a
-    business decision: this table should reflect what the platform actually
-    recommended, not wait on some future "approve this plan" step) - each
-    linked back to this `PlanningRun` via `planning_run_id`, with `vehicle_id`
-    from Fleet Assignment when the fleet module is enabled (`None` otherwise,
-    or for a line Fleet Assignment couldn't assign a vehicle to). This is
-    inside the same transaction as the audit row itself: a trade-off, not an
-    oversight - a Shipment-insert failure now rolls back the whole
-    transaction, so a successful plan could end up with no audit row at all.
-    Matches the existing "never break the real run" philosophy (the caller's
-    actual result is still returned either way), but is a new failure mode
-    worth knowing about.
-
-    Never raises: a DB write hiccup must not crash or mask the actual planning
+    Planning only persists audit data. Shipment creation requires explicit approval\n    through the operator API; planning has no operational side effects.\n\n    Never raises: a DB write hiccup must not crash or mask the actual planning
     result/exception, so any failure here is only logged.
     """
     try:
