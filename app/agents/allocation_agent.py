@@ -35,6 +35,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agents.state import PlanningState
+from app.agents.llm_native_optimizer import generate_llm_scenarios
 from app.core.llm import get_active_model_name, get_chat_model
 from app.models.entities import LocationType
 from app.schemas.allocation import AllocationLine, AllocationResult, AllocationScenario
@@ -311,6 +312,20 @@ async def allocate_node(state: PlanningState) -> dict:
         _summarize_scenario(name, lines, shortages, high_priority_store_ids)
         for name, lines in strategy_lines.items()
     ]
+
+    # Optional LLM-native search; existing strategies remain benchmark baselines.
+    from app.core.config import get_settings
+    settings = get_settings()
+    if settings.llm_native_optimizer_enabled:
+        scenarios.extend(await generate_llm_scenarios(
+            shortages=shortages,
+            candidate_plans=candidate_plans,
+            terminal_stock=terminal_stock,
+            high_priority_store_ids=high_priority_store_ids,
+            summarize=_summarize_scenario,
+            iterations=settings.llm_optimizer_iterations,
+            objective=state["request"].optimization_objective,
+        ))
 
     ranked = await _rank_scenarios(scenarios)
     result = AllocationResult(scenarios=ranked, recommended_strategy=ranked[0].strategy)
