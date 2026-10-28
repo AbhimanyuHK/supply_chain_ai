@@ -331,3 +331,22 @@ class ShipmentCreationClaim(TimestampMixin, Base):
     __tablename__ = "shipment_creation_claims"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     planning_run_id: Mapped[int] = mapped_column(ForeignKey("planning_runs.id"), unique=True, nullable=False)
+
+
+class PlanningOutcome(TimestampMixin, Base):
+    """Observed execution outcome; unique external reference prevents duplicate ingestion."""
+    __tablename__ = "planning_outcomes"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    external_reference: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    planning_run_id: Mapped[int] = mapped_column(ForeignKey("planning_runs.id"), nullable=False)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.store_id"), nullable=False)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.product_id"), nullable=False)
+    observation_date: Mapped[date_] = mapped_column(nullable=False)
+    actual_demand_qty: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    fulfilled_qty: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    actual_cost: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    __table_args__ = (
+        CheckConstraint("actual_demand_qty >= 0 AND fulfilled_qty >= 0 AND actual_cost >= 0",
+                        name="ck_planning_outcomes_nonnegative"),
+        Index("ix_planning_outcomes_run_date", "planning_run_id", "observation_date"),
+    )
