@@ -9,3 +9,11 @@ New API routes on the dev branch:
 The Control Tower displays benchmark and stress-test results. No autonomous event worker is implemented. Approval decisions are auditable but do not dispatch shipments.
 
 Before release, run database migrations, unit tests, API integration tests, concurrent event tests, security review, and provider-backed smoke tests. Production authentication for planning endpoints, calibrated forecast intervals, actual store-to-store road distances, and queue-worker recovery remain incomplete. These changes are not production validated.
+
+
+## Security and resilience follow-up
+All planning routes, including optimize, run history, benchmark and stress-test, now require the same X-Operator-Token authentication as the decision routes. Set SUPPLY_CHAIN_OPERATOR_TOKEN before starting the API. The Streamlit Control Tower prompts for this token in its sidebar and sends it in a request header. The shared token is a development gate, not per-user RBAC or a complete production identity system.
+
+Allocation now retains deterministic baseline scenarios if LLM candidate generation fails and applies deterministic objective ranking if the ranking model fails. The critic failure is isolated from already validated LLM plans. The original master branch remains unchanged.
+
+Local test execution is blocked because this environment cannot resolve github.com for git clone; GitHub commits do not establish passing tests. Production release remains gated on verified migrations, auth, concurrency, event recovery and forecast calibration.
