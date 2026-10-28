@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.graph import run_planning_workflow
+from app.api.routers.decisions import require_operator
 from app.core.exceptions import NotFoundError
 from app.database.repositories import PlanningRunRepository
 from app.database.session import get_db
@@ -21,7 +22,7 @@ from app.schemas.api import OptimizeResponse
 from app.schemas.planning import PlanningRequest
 from app.schemas.planning_run import PlanningRunRead, PlanningRunSummary
 
-router = APIRouter(tags=["planning"])
+router = APIRouter(tags=["planning"], dependencies=[Depends(require_operator)])
 
 
 @router.post("/optimize", response_model=OptimizeResponse)
