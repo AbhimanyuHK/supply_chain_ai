@@ -26,13 +26,27 @@ def require_operator(x_operator_token: str | None = Header(default=None)):
         raise HTTPException(status_code=403, detail="Operator authentication required")
 
 
+def require_approver(x_approver_token: str | None = Header(default=None)):
+    """Separate approval authority; no fallback to the operator token."""
+    secret = os.getenv("SUPPLY_CHAIN_APPROVER_TOKEN")
+    if not secret or not x_approver_token or not secrets.compare_digest(x_approver_token, secret):
+        raise HTTPException(status_code=403, detail="Approver authentication required")
+
+
+def require_fulfillment(x_fulfillment_token: str | None = Header(default=None)):
+    """Separate shipment-creation authority; no fallback to the operator token."""
+    secret = os.getenv("SUPPLY_CHAIN_FULFILLMENT_TOKEN")
+    if not secret or not x_fulfillment_token or not secrets.compare_digest(x_fulfillment_token, secret):
+        raise HTTPException(status_code=403, detail="Fulfillment authentication required")
+
+
 class ApprovalInput(BaseModel):
     reviewer: str = Field(min_length=1, max_length=128)
     reason: str = Field(min_length=1, max_length=2000)
     approve: bool
 
 
-@router.post("/planning-runs/{run_id}/approval", dependencies=[Depends(require_operator)])
+@router.post("/planning-runs/{run_id}/approval", dependencies=[Depends(require_approver)])
 async def approve_run(run_id: int, body: ApprovalInput, db: AsyncSession = Depends(get_db)):
     run = await db.get(PlanningRun, run_id)
     if run is None:
@@ -228,7 +242,7 @@ async def retry_failed_event(event_id: str, db: AsyncSession = Depends(get_db)):
     return {"event_id": event_id, "action": "queued"}
 
 
-@router.post("/planning-runs/{run_id}/create-shipments", dependencies=[Depends(require_operator)])
+@router.post("/planning-runs/{run_id}/create-shipments", dependencies=[Depends(require_fulfillment)])
 async def create_approved_shipments(run_id: int, db: AsyncSession = Depends(get_db)):
     """Create PLANNED records only after approval; does not dispatch vehicles.
 
