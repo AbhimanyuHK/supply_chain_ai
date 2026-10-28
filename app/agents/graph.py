@@ -39,6 +39,9 @@ serve a plan computed under different application logic if the app was
 redeployed between two calls.
 """
 
+import hashlib
+import json
+
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
@@ -64,6 +67,20 @@ from app.models.entities import PlanningRun, PlanningRunStatus
 from app.schemas.planning import PlanningRequest
 from app.schemas.planning_run import PlanningRunRead
 from app.services.fingerprint import compute_data_fingerprint
+
+
+def _versioned_fingerprint(snapshot) -> str:
+    """Invalidate cached runs when optimizer settings or prompt logic change."""
+    settings = get_settings()
+    canonical = json.dumps({
+        "data": compute_data_fingerprint(snapshot),
+        "optimizer_enabled": settings.llm_native_optimizer_enabled,
+        "optimizer_iterations": settings.llm_optimizer_iterations,
+        "fleet_enabled": settings.fleet_module_enabled,
+        "auto_create_shipments": settings.auto_create_shipment_records,
+        "planner_revision": "llm-critic-fleet-route-v2",
+    }, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_graph() -> CompiledStateGraph:
@@ -248,7 +265,7 @@ async def run_planning_workflow(request: PlanningRequest, *, force_rerun: bool =
         raise
 
     snapshot = preload["master_data"]
-    data_fingerprint = compute_data_fingerprint(snapshot)
+    data_fingerprint = _versioned_fingerprint(snapshot)
 
     if not force_rerun:
         cached = await _find_cached_success(request, data_fingerprint)
