@@ -80,3 +80,12 @@ Apply alembic upgrade head before using these endpoints.
 - New focused tests cover numerical calibration, feedback summaries and credential separation. They have NOT been run.
 - CI remains master-only as requested; master has not been changed.
 Outstanding: end-to-end database integration tests, worker crash recovery tests, independent held-out calibration, production identity and role integration, real tracing/alerts, and verified migrations.
+
+
+## Consolidated completion pass and release gates
+- Forecasts: retrospective date-split calibration is available at GET /api/v1/outcomes/planning-runs/{run_id}/heldout-evaluation?cutoff_date=YYYY-MM-DD. Calibration samples strictly precede the cutoff; evaluation samples are on or after it. A single planning run may have no usable cross-period data. This does not prove prospective calibration unless forecast issuance timestamps precede observed dates and training data cannot leak.
+- Database test fixture cleanup now removes PlanningOutcome, PlanApproval, ShipmentCreationClaim and ReplanningEvent before PlanningRun.
+- Added DB uniqueness integration tests for approval decisions, shipment claims and event IDs.
+- Required release verification: alembic upgrade head against an isolated database; pytest; ruff check .; concurrent shipment-claim and replanning-worker tests against the production DB dialect; API auth negative tests; end-to-end UI and workflow smoke tests.
+- Unfinished production hardening: replace shared tokens with enterprise OIDC identity and fine-grained authorization; trace and alert on worker failures; calibrate forecasts prospectively on independent time periods; prove recovery safety under worker termination and database failure.
+- Do not describe this branch as production-ready before those release gates pass. Master-only CI policy is unchanged.
