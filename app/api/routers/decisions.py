@@ -179,3 +179,60 @@ async def retry_failed_event(event_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(409, "Only failed events can be retried")
     await db.flush()
     return {"event_id": event_id, "action": "queued"}
+
+
+@router.post("/planning-runs/{run_id}/create-shipments", dependencies=[Depends(require_operator)])
+async def create_approved_shipments(run_id: int, db: AsyncSession = Depends(get_db)):
+    """Create PLANNED records only after approval; does not dispatch vehicles.
+
+    Uses a row lock where supported and refuses to duplicate an existing run.
+    """
+    from app.models.entities import Shipment, PlanningRunStatus
+    run = await db.scalar(
+        select(PlanningRun).where(PlanningRun.id == run_id).with_for_update()
+    )
+    if run is None:
+        raise HTTPException(404, "Planning run not found")
+    approval = await db.scalar(
+        select(PlanApproval).where(PlanApproval.planning_run_id == run_id)
+    )
+    validation = run.constraint_validation or {}
+    recommendation = run.final_recommendation or {}
+    if (
+        run.status != PlanningRunStatus.SUCCESS
+        or approval is None or approval.status != "approved"
+        or not validation.get("final_strategy")
+        or approval.strategy != validation.get("final_strategy")
+        or recommendation.get("selected_strategy") != approval.strategy
+        or validation.get("unresolved_violations")
+        or validation.get("replanning_triggered")
+        or recommendation.get("fell_back_to_invalid_scenario")
+    ):
+        raise HTTPException(409, "Run is not eligible for shipment creation")
+    existing = await db.scalar(
+        select(Shipment.shipment_id).where(Shipment.planning_run_id == run_id).limit(1)
+    )
+    if existing is not None:
+        raise HTTPException(409, "Shipment records already exist for this run")
+    lines = recommendation.get("shipment_plan") or []
+    if not lines:
+        raise HTTPException(409, "Approved plan contains no shipment lines")
+    for line in lines:
+        if (
+            not isinstance(line, dict)
+            or not all(isinstance(line.get(key), int) and line[key] > 0
+                       for key in ("terminal_id", "store_id", "product_id", "quantity"))
+        ):
+            raise HTTPException(409, "Approved plan has invalid shipment lines")
+    for line in lines:
+        db.add(Shipment(
+            terminal_id=line["terminal_id"],
+            store_id=line["store_id"],
+            product_id=line["product_id"],
+            quantity=line["quantity"],
+            shipment_date=run.planning_date,
+            vehicle_id=line.get("vehicle_id"),
+            planning_run_id=run_id,
+        ))
+    await db.flush()
+    return {"run_id": run_id, "status": "planned", "shipments_created": len(lines)}
