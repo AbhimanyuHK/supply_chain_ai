@@ -17,3 +17,9 @@ All planning routes, including optimize, run history, benchmark and stress-test,
 Allocation now retains deterministic baseline scenarios if LLM candidate generation fails and applies deterministic objective ranking if the ranking model fails. The critic failure is isolated from already validated LLM plans. The original master branch remains unchanged.
 
 Local test execution is blocked because this environment cannot resolve github.com for git clone; GitHub commits do not establish passing tests. Production release remains gated on verified migrations, auth, concurrency, event recovery and forecast calibration.
+
+
+## Latest fleet and event safety changes
+- LLM fleet assignments must pass the independent weight/volume/terminal/availability validator and now replace the deterministic baseline only when they reduce the vehicle count or eliminate unassigned lines.
+- Explicit event execution requires non-null store_ids and product_ids to avoid accidentally replanning the entire supply chain from a loosely scoped event.
+- CI runs on dev branch pushes. Check the GitHub Actions run conclusion; a workflow marked in_progress does not establish passing tests.
