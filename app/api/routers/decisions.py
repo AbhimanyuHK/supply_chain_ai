@@ -132,3 +132,48 @@ async def execute_replanning_event(
 
 from app.schemas.planning import PlanningRequest
 ExecuteEventInput.model_rebuild()
+
+
+@router.get("/events", dependencies=[Depends(require_operator)])
+async def list_events(
+    status: str | None = None,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+):
+    """Operator event queue inspection, including failed and stuck processing."""
+    if limit < 1 or limit > 500:
+        raise HTTPException(422, "limit must be between 1 and 500")
+    if status is not None and status not in {
+        "queued", "processing", "processed", "failed", "ignored"
+    }:
+        raise HTTPException(422, "Unknown event status")
+    statement = select(ReplanningEvent).order_by(
+        ReplanningEvent.created_at.desc()
+    ).limit(limit)
+    if status is not None:
+        statement = statement.where(ReplanningEvent.action == status)
+    rows = (await db.scalars(statement)).all()
+    return [
+        {
+            "event_id": item.event_id,
+            "kind": item.kind,
+            "entity_id": item.entity_id,
+            "occurred_at": item.occurred_at.isoformat(),
+            "action": item.action,
+        }
+        for item in rows
+    ]
+
+
+@router.post("/events/{event_id}/retry", dependencies=[Depends(require_operator)])
+async def retry_failed_event(event_id: str, db: AsyncSession = Depends(get_db)):
+    """Manually requeue failed events; never silently retry in-flight work."""
+    changed = await db.execute(
+        update(ReplanningEvent)
+        .where(ReplanningEvent.event_id == event_id, ReplanningEvent.action == "failed")
+        .values(action="queued")
+    )
+    if changed.rowcount != 1:
+        raise HTTPException(409, "Only failed events can be retried")
+    await db.flush()
+    return {"event_id": event_id, "action": "queued"}
