@@ -128,15 +128,20 @@ async def execute_replanning_event(
     try:
         result = await run_planning_workflow(body.request, force_rerun=True)
     except Exception as exc:
-        row.action = "failed"
-        row.processing_started_at = None
-        row.last_error = str(exc)[:2000]
+        await db.execute(
+            update(ReplanningEvent)
+            .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing")
+            .values(action="failed", processing_started_at=None, last_error=str(exc)[:2000])
+        )
         await db.commit()
         raise
     if result.get("errors") or not result.get("planning_run_id"):
-        row.action = "failed"
-        row.processing_started_at = None
-        row.last_error = "Planning workflow returned errors or no persisted run"
+        await db.execute(
+            update(ReplanningEvent)
+            .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing")
+            .values(action="failed", processing_started_at=None,
+                    last_error="Planning workflow returned errors or no persisted run")
+        )
         await db.commit()
         raise HTTPException(502, "Replanning did not complete successfully")
     completed = await db.execute(
