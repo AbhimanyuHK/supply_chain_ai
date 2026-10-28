@@ -33,3 +33,13 @@ The experimental solver now calls a separate structured-output Critic Agent betw
 - True route optimization requires store-to-store distances; terminal-to-store distance sums are only proxies.
 
 **Safety:** Experimental LLM proposals must not be automatically dispatched. No claim of global optimality is made.
+
+
+## Additional development modules
+- `app/services/uncertainty_simulation.py`: scenario demand stress tests with explicit multipliers (not calibrated Chronos quantiles).
+- `app/services/replanning_events.py`: deterministic event trigger, magnitude threshold and cooldown (no queue consumer wired).
+- `app/services/approval_workflow.py`: pure approval state machine requiring reviewer and reason (no persistent approval API yet).
+- `app/agents/constraint_validation_agent.py`: now checks lane references and demand conservation, selects among feasible plans for the requested objective, and does not label an infeasible plan as final.
+- `tests/test_supply_chain_decision_services.py`: targeted tests for these modules.
+
+**Integration warning:** The new services are isolated primitives, not yet connected to persistent APIs, scheduling, authentication, or Streamlit. The broader roadmap is NOT fully delivered. Tests have been committed but not executed in this environment.
