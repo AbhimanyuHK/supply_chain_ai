@@ -119,3 +119,17 @@ try:
         st.info("No replanning events recorded.")
 except requests.RequestException as exc:
     st.warning(str(exc))
+
+
+st.subheader("Observed outcomes and calibration")
+try:
+    evaluation = get_json(f"/api/v1/outcomes/planning-runs/{selected}/evaluation")
+    st.json(evaluation)
+except requests.RequestException as exc:
+    st.warning(f"Outcome evaluation unavailable: {exc}")
+
+st.subheader("Operational monitoring")
+try:
+    st.json(get_json("/api/v1/operations/summary"))
+except requests.RequestException as exc:
+    st.warning(f"Operational summary unavailable: {exc}")
