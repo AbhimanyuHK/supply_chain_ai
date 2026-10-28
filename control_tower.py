@@ -96,3 +96,26 @@ try:
         st.dataframe(stress_rows, use_container_width=True, hide_index=True)
 except requests.RequestException as exc:
     st.warning(f"Benchmark or stress-test endpoint unavailable: {exc}")
+
+
+st.subheader("Approval status")
+try:
+    approval = get_json(f"/api/v1/decisions/planning-runs/{selected}/approval")
+    st.json(approval)
+except requests.HTTPError as exc:
+    if exc.response is not None and exc.response.status_code == 404:
+        st.info("No approval decision recorded.")
+    else:
+        st.warning(str(exc))
+except requests.RequestException as exc:
+    st.warning(str(exc))
+
+st.subheader("Replanning events")
+try:
+    events = get_json("/api/v1/decisions/events?limit=50")
+    if events:
+        st.dataframe(events, use_container_width=True, hide_index=True)
+    else:
+        st.info("No replanning events recorded.")
+except requests.RequestException as exc:
+    st.warning(str(exc))
