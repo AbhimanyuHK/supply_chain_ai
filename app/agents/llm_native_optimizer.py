@@ -130,11 +130,18 @@ async def generate_llm_scenarios(
                 "Try different lanes or quantities."
             )
         if iteration + 1 < iterations:
-            critique = await critique_plan(
-                objective=objective, scenario=scenario, demand=demand,
-                stock=list(terminal_stock.items()), lanes=lanes,
-            )
-            feedback += f" Independent critic improvements: {critique.improvements}. Risks: {critique.weaknesses}."
+            try:
+                critique = await critique_plan(
+                    objective=objective, scenario=scenario, demand=demand,
+                    stock=list(terminal_stock.items()), lanes=lanes,
+                )
+                feedback += (
+                    f" Independent critic improvements: {critique.improvements}. "
+                    f"Risks: {critique.weaknesses}."
+                )
+            except Exception:
+                # A critic outage must not discard independently validated plans.
+                feedback += " Critic unavailable; use the previous objective feedback."
         if stagnant >= 2:
             break
     return accepted
