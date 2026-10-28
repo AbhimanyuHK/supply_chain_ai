@@ -114,7 +114,8 @@ async def execute_replanning_event(
         raise HTTPException(409, "Event is not queued")
     if not body.request.store_ids or not body.request.product_ids:
         raise HTTPException(422, "Non-empty store_ids and product_ids are required for event execution")
-    # Compare-and-swap claim prevents two workers processing the same event.
+    # Bind completion to this attempt so an older worker cannot finish a retry.
+    expected_attempt = (row.attempt_count or 0) + 1
     claimed = await db.execute(
         update(ReplanningEvent)
         .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "queued")
@@ -130,7 +131,8 @@ async def execute_replanning_event(
     except Exception as exc:
         await db.execute(
             update(ReplanningEvent)
-            .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing")
+            .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing",
+                   ReplanningEvent.attempt_count == expected_attempt)
             .values(action="failed", processing_started_at=None, last_error=str(exc)[:2000])
         )
         await db.commit()
@@ -138,7 +140,8 @@ async def execute_replanning_event(
     if result.get("errors") or not result.get("planning_run_id"):
         await db.execute(
             update(ReplanningEvent)
-            .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing")
+            .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing",
+                   ReplanningEvent.attempt_count == expected_attempt)
             .values(action="failed", processing_started_at=None,
                     last_error="Planning workflow returned errors or no persisted run")
         )
@@ -146,7 +149,8 @@ async def execute_replanning_event(
         raise HTTPException(502, "Replanning did not complete successfully")
     completed = await db.execute(
         update(ReplanningEvent)
-        .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing")
+        .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing",
+                   ReplanningEvent.attempt_count == expected_attempt)
         .values(action="processed", processing_started_at=None,
                 planning_run_id=result["planning_run_id"])
     )
