@@ -33,6 +33,8 @@ from loguru import logger
 
 from app.agents.scenario_selection import select_reviewable_scenarios
 from app.agents.state import PlanningState
+from app.agents.llm_fleet_optimizer import propose_fleet_plan
+from app.core.config import get_settings
 from app.models.entities import VehicleStatus
 from app.schemas.allocation import AllocationLine, AllocationScenario
 from app.schemas.fleet_assignment import (
@@ -145,7 +147,39 @@ async def assign_fleet_node(state: PlanningState) -> dict:
     scenarios, fell_back = select_reviewable_scenarios(allocation, state["constraint_validation"])
     snapshot = state["master_data"]
 
-    scenario_assignments = [_assign_scenario(s, snapshot) for s in scenarios]
+    scenario_assignments = []
+    for scenario in scenarios:
+        assignment = _assign_scenario(scenario, snapshot)
+        if get_settings().llm_native_optimizer_enabled and scenario.lines:
+            try:
+                proposed = await propose_fleet_plan(scenario.lines, snapshot.fleet, snapshot.products)
+                if proposed is not None:
+                    vehicles = {v.vehicle_id: v for v in snapshot.fleet}
+                    products = {p.product_id: p for p in snapshot.products}
+                    loads = {}
+                    for index, line in enumerate(scenario.lines):
+                        vehicle = vehicles[proposed[index]]
+                        if vehicle.vehicle_id not in loads:
+                            loads[vehicle.vehicle_id] = VehicleLoad(
+                                vehicle_id=vehicle.vehicle_id, terminal_id=vehicle.terminal_id,
+                                lines=[], total_weight=0.0, total_volume=0.0,
+                                capacity_weight=float(vehicle.capacity_weight),
+                                capacity_volume=float(vehicle.capacity_volume),
+                            )
+                        load = loads[vehicle.vehicle_id]
+                        load.lines.append(AssignedLine(
+                            terminal_id=line.terminal_id, store_id=line.store_id,
+                            product_id=line.product_id, quantity=line.quantity,
+                            vehicle_id=vehicle.vehicle_id, unassignable=False,
+                        ))
+                        load.total_weight += float(products[line.product_id].weight) * line.quantity
+                        load.total_volume += float(products[line.product_id].volume) * line.quantity
+                    assignment = ScenarioFleetAssignment(
+                        strategy=scenario.strategy, vehicle_loads=list(loads.values()), unassigned_lines=[]
+                    )
+            except Exception as exc:
+                logger.warning("LLM fleet proposal failed; using baseline: {}", exc)
+        scenario_assignments.append(assignment)
     total_unassigned = sum(len(sa.unassigned_lines) for sa in scenario_assignments)
 
     message = (
