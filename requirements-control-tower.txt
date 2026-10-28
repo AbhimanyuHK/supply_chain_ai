@@ -1,0 +1,3 @@
+"""Optional UI dependencies. Install with pip install -r requirements-control-tower.txt."""
+streamlit>=1.40,<2
+requests>=2.31,<3
