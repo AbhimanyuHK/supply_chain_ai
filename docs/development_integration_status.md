@@ -51,3 +51,11 @@ This does not reserve inventory, dispatch vehicles, or guarantee exactly-once do
 - Control Tower now displays the selected planning run's approval decision and the latest 50 replanning events, read-only.
 - Added regression coverage for a successful matching approval and the unique shipment claim ORM metadata.
 - These changes are committed to dev only and have not been validated by CI.
+
+
+## Replanning recovery
+Migration 0007 adds processing timestamps, attempt counts, last error and planning run linkage.
+POST /api/v1/decisions/events/recover-stale?timeout_minutes=60 is operator authenticated and marks timed-out processing events failed for review.
+Operators should verify the prior execution has stopped before retrying. Recovery never automatically retries an uncertain operation.
+Conditional event completion updates protect against late workers overwriting a recovered status.
+Apply alembic upgrade head before using these features. Autonomous queue processing remains pending.
