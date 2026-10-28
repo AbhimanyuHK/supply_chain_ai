@@ -174,9 +174,12 @@ async def assign_fleet_node(state: PlanningState) -> dict:
                         ))
                         load.total_weight += float(products[line.product_id].weight) * line.quantity
                         load.total_volume += float(products[line.product_id].volume) * line.quantity
-                    assignment = ScenarioFleetAssignment(
+                    candidate = ScenarioFleetAssignment(
                         strategy=scenario.strategy, vehicle_loads=list(loads.values()), unassigned_lines=[]
                     )
+                    if (assignment.unassigned_lines
+                            or len(candidate.vehicle_loads) < len(assignment.vehicle_loads)):
+                        assignment = candidate
             except Exception as exc:
                 logger.warning("LLM fleet proposal failed; using baseline: {}", exc)
         scenario_assignments.append(assignment)
