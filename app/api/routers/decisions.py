@@ -68,7 +68,11 @@ async def approve_run(run_id: int, body: ApprovalInput, db: AsyncSession = Depen
         reviewer=body.reviewer, reason=body.reason,
     )
     db.add(row)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "Approval decision already exists") from exc
     return {"run_id": run_id, "strategy": strategy, "status": status}
 
 
