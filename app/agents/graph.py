@@ -225,24 +225,6 @@ async def _persist_run(
         async with AsyncSessionLocal() as session:
             run = await PlanningRunRepository(session).create(**fields)
 
-            if error is None and state is not None and settings.auto_create_shipment_records:
-                final_recommendation = state.get("final_recommendation")
-                if (final_recommendation is not None and final_recommendation.shipment_plan
-                        and state.get("constraint_validation") is not None
-                        and state["constraint_validation"].final_strategy is not None
-                        and not state["constraint_validation"].unresolved_violations):
-                    shipment_repo = ShipmentRepository(session)
-                    for line in final_recommendation.shipment_plan:
-                        await shipment_repo.create(
-                            terminal_id=line.terminal_id,
-                            store_id=line.store_id,
-                            product_id=line.product_id,
-                            quantity=line.quantity,
-                            shipment_date=request.planning_date,
-                            vehicle_id=line.vehicle_id,
-                            planning_run_id=run.id,
-                        )
-
             await session.commit()
             return run
     except Exception as exc:  # noqa: BLE001 - persistence must never break a real run
