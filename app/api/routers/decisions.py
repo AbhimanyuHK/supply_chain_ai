@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import get_db
 from app.models.entities import PlanApproval, PlanningRun, ReplanningEvent
 from app.services.replanning_events import SupplyChainEvent, should_replan
+from app.schemas.planning import PlanningRequest
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
 
@@ -70,6 +71,15 @@ async def get_approval(run_id: int, db: AsyncSession = Depends(get_db)):
 async def ingest_event(event: SupplyChainEvent, db: AsyncSession = Depends(get_db)):
     if event.occurred_at.tzinfo is None:
         raise HTTPException(422, "occurred_at must include timezone")
+    scope = None
+    if event.planning_request is not None:
+        try:
+            request = PlanningRequest.model_validate(event.planning_request)
+        except ValueError as exc:
+            raise HTTPException(422, "Invalid event planning request") from exc
+        if not request.store_ids or not request.product_ids:
+            raise HTTPException(422, "Event planning scope requires non-empty store_ids and product_ids")
+        scope = request.model_dump(mode="json")
     previous = await db.scalar(select(ReplanningEvent).where(ReplanningEvent.event_id == event.event_id))
     if previous is not None:
         return {"event_id": event.event_id, "action": previous.action, "duplicate": True}
@@ -88,6 +98,7 @@ async def ingest_event(event: SupplyChainEvent, db: AsyncSession = Depends(get_d
     db.add(ReplanningEvent(
         event_id=event.event_id, kind=event.kind, entity_id=event.entity_id,
         occurred_at=occurred, magnitude=event.magnitude, action=action,
+        planning_request=scope,
     ))
     await db.flush()
     return {"event_id": event.event_id, "action": action, "duplicate": False}
@@ -194,6 +205,7 @@ async def list_events(
             "action": item.action,
             "attempt_count": item.attempt_count,
             "planning_run_id": item.planning_run_id,
+            "has_planning_scope": bool(item.planning_request),
             "processing_started_at": item.processing_started_at.isoformat() if item.processing_started_at else None,
         }
         for item in rows
