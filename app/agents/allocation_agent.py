@@ -317,7 +317,8 @@ async def allocate_node(state: PlanningState) -> dict:
     from app.core.config import get_settings
     settings = get_settings()
     if settings.llm_native_optimizer_enabled:
-        scenarios.extend(await generate_llm_scenarios(
+        try:
+            scenarios.extend(await generate_llm_scenarios(
             shortages=shortages,
             candidate_plans=candidate_plans,
             terminal_stock=terminal_stock,
@@ -325,7 +326,9 @@ async def allocate_node(state: PlanningState) -> dict:
             summarize=_summarize_scenario,
             iterations=settings.llm_optimizer_iterations,
             objective=state["request"].optimization_objective,
-        ))
+            ))
+        except Exception as exc:
+            logger.warning("LLM allocation search failed; preserving deterministic baselines: {}", exc)
 
     ranked = await _rank_scenarios(scenarios)
     result = AllocationResult(scenarios=ranked, recommended_strategy=ranked[0].strategy)
