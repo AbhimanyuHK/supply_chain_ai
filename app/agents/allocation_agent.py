@@ -330,7 +330,24 @@ async def allocate_node(state: PlanningState) -> dict:
         except Exception as exc:
             logger.warning("LLM allocation search failed; preserving deterministic baselines: {}", exc)
 
-    ranked = await _rank_scenarios(scenarios)
+    try:
+        ranked = await _rank_scenarios(scenarios)
+    except Exception as exc:
+        logger.warning("LLM ranking failed; using deterministic objective ordering: {}", exc)
+        objective = state["request"].optimization_objective
+        if objective == "maximize_service_level":
+            ranked = sorted(scenarios, key=lambda x: (
+                -x.fulfillment_rate, x.total_estimated_cost, x.strategy,
+            ))
+        else:
+            ranked = sorted(scenarios, key=lambda x: (
+                -x.high_priority_shortages_fulfilled,
+                x.total_estimated_cost, -x.fulfillment_rate, x.strategy,
+            ))
+        for index, item in enumerate(ranked, start=1):
+            item.rank = index
+            item.rationale = item.rationale or "Deterministic ranking fallback."
+
     result = AllocationResult(scenarios=ranked, recommended_strategy=ranked[0].strategy)
 
     message = (
