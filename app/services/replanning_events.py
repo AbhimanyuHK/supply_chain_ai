@@ -9,6 +9,7 @@ class SupplyChainEvent(BaseModel):
     entity_id: str
     occurred_at: datetime
     magnitude: float = Field(default=0, ge=0)
+    planning_request: dict | None = None
 
 
 REPLAN_KINDS = {"inventory_changed", "demand_spike", "vehicle_unavailable", "delivery_delayed"}
