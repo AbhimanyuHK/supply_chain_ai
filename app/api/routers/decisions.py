@@ -139,11 +139,17 @@ async def execute_replanning_event(
         row.last_error = "Planning workflow returned errors or no persisted run"
         await db.commit()
         raise HTTPException(502, "Replanning did not complete successfully")
-    row.action = "processed"
-    row.processing_started_at = None
-    row.planning_run_id = result["planning_run_id"]
+    completed = await db.execute(
+        update(ReplanningEvent)
+        .where(ReplanningEvent.id == row.id, ReplanningEvent.action == "processing")
+        .values(action="processed", processing_started_at=None,
+                planning_run_id=result["planning_run_id"])
+    )
+    if completed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(409, "Event state changed during processing; review run before retry")
     await db.commit()
-    return {"event_id": event_id, "action": row.action,
+    return {"event_id": event_id, "action": "processed",
             "planning_run_id": result.get("planning_run_id")}
 
 
