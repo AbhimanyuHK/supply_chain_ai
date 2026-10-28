@@ -11,7 +11,7 @@ name: CI
 # the test-* jobs, this one is expected to always pass with zero findings.
 on:
   push:
-    branches: [master, dev]
+    branches: [master]
   pull_request:
     branches: [master]
   workflow_dispatch: {}
