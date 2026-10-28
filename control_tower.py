@@ -75,3 +75,22 @@ with st.expander("Agent trace and audit"):
     st.json(record.get("trace") or [])
 with st.expander("Full run details"):
     st.json(record)
+
+
+st.subheader("Robustness and optimization evaluation")
+try:
+    benchmark = get_json(f"/api/v1/planning-runs/{selected}/benchmark")
+    if benchmark:
+        st.caption("LLM versus heuristic candidate metrics (feasibility is independently validated).")
+        st.dataframe(benchmark, use_container_width=True, hide_index=True)
+    stress = get_json(f"/api/v1/planning-runs/{selected}/stress-test")
+    st.caption(stress.get("note", ""))
+    stress_rows = [
+        {"strategy": item["strategy"], **result}
+        for item in stress.get("scenarios", [])
+        for result in item["stress"]
+    ]
+    if stress_rows:
+        st.dataframe(stress_rows, use_container_width=True, hide_index=True)
+except requests.RequestException as exc:
+    st.warning(f"Benchmark or stress-test endpoint unavailable: {exc}")
