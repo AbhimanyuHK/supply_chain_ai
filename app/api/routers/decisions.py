@@ -38,7 +38,10 @@ async def approve_run(run_id: int, body: ApprovalInput, db: AsyncSession = Depen
         raise HTTPException(404, "Planning run not found")
     validation = run.constraint_validation or {}
     strategy = validation.get("final_strategy")
+    recommendation = run.final_recommendation or {}
     if (run.status.value != "success" or not strategy
+            or recommendation.get("selected_strategy") != strategy
+            or recommendation.get("fell_back_to_invalid_scenario")
             or validation.get("unresolved_violations") or validation.get("replanning_triggered")):
         raise HTTPException(409, "Run has no validated final strategy")
     existing = await db.scalar(select(PlanApproval).where(PlanApproval.planning_run_id == run_id))
