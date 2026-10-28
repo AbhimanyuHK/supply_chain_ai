@@ -62,3 +62,16 @@ The route's distance and cost remain **terminal-leg proxies**, not actual multi-
 
 ## Operational status
 These modules are committed but untested in the current execution environment: outbound git access could not resolve github.com. Do not treat code committed to GitHub as verified deployment. Approvals, event triggers, calibrated uncertainty, persistent optimization feedback, and fully secured APIs still need end-to-end integration.
+
+
+## Persistent decision endpoints (development)
+Run `alembic upgrade head` to create `plan_approvals` and `replanning_events`.
+Set `SUPPLY_CHAIN_OPERATOR_TOKEN` to a high-entropy secret. Every endpoint below requires an `X-Operator-Token` header. With the secret unset, requests fail closed (403).
+
+- `POST /api/v1/decisions/planning-runs/{run_id}/approval`: body `{"reviewer":"...","reason":"...","approve":true}`. Requires a completed run with a validated final strategy; duplicate decisions return 409.
+- `GET /api/v1/decisions/planning-runs/{run_id}/approval`: read the persistent decision.
+- `POST /api/v1/decisions/events`: accepts `SupplyChainEvent`, deduplicates by event ID, applies threshold and cooldown, and records an action of `queued` or `ignored`.
+
+**Queue semantics:** `queued` means a durable database record, **not** an executing worker or message-broker enqueue. A worker with an explicit planning scope and transactional claim/acknowledgment must be implemented before automatic replanning is available. Approvals are audit decisions and do not dispatch shipments.
+
+Security scope: this shared operator token protects only the new decision endpoints; other API endpoints still need production authentication, authorization, rate limiting, and audit review. A database uniqueness constraint handles duplicate event IDs, but simultaneous conflicting requests still need explicit integrity-error handling. Do not enable production event ingestion until those safeguards and tests are complete.
