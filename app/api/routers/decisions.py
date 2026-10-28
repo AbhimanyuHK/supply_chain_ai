@@ -187,7 +187,7 @@ async def create_approved_shipments(run_id: int, db: AsyncSession = Depends(get_
 
     Uses a row lock where supported and refuses to duplicate an existing run.
     """
-    from app.models.entities import Shipment, PlanningRunStatus
+    from app.models.entities import Shipment, ShipmentCreationClaim, PlanningRunStatus
     run = await db.scalar(
         select(PlanningRun).where(PlanningRun.id == run_id).with_for_update()
     )
@@ -224,6 +224,10 @@ async def create_approved_shipments(run_id: int, db: AsyncSession = Depends(get_
                        for key in ("terminal_id", "store_id", "product_id", "quantity"))
         ):
             raise HTTPException(409, "Approved plan has invalid shipment lines")
+    # A UNIQUE planning_run_id claim makes concurrent requests conflict at the DB level.
+    # Claim and shipment inserts share the same transaction.
+    db.add(ShipmentCreationClaim(planning_run_id=run_id))
+    await db.flush()
     for line in lines:
         db.add(Shipment(
             terminal_id=line["terminal_id"],
