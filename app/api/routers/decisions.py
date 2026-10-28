@@ -108,6 +108,8 @@ async def execute_replanning_event(
         raise HTTPException(404, "Event not found")
     if row.action != "queued":
         raise HTTPException(409, "Event is not queued")
+    if body.request.store_ids is None or body.request.product_ids is None:
+        raise HTTPException(422, "Explicit store_ids and product_ids are required for event execution")
     # Compare-and-swap claim prevents two workers processing the same event.
     claimed = await db.execute(
         update(ReplanningEvent)
