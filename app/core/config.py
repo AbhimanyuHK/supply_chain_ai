@@ -154,6 +154,11 @@ class Settings(BaseSettings):
         ),
     )
 
+    auto_create_shipment_records: bool = Field(
+        default=False,
+        description="Legacy opt-in: write shipment records for validated plans without human approval. Keep disabled in production.",
+    )
+
     llm_native_optimizer_enabled: bool = Field(
         default=False,
         description="Opt in to LLM-generated allocation proposals and iterative search.",
