@@ -143,7 +143,7 @@ async def execute_replanning_event(
         raise HTTPException(409, "Event is not queued")
     if not body.request.store_ids or not body.request.product_ids:
         raise HTTPException(422, "Non-empty store_ids and product_ids are required for event execution")
-    if row.planning_request is not None and body.request.scope_key() != PlanningRequest.model_validate(row.planning_request).scope_key():
+    if row.planning_request is not None and body.request.model_dump(mode="json") != PlanningRequest.model_validate(row.planning_request).model_dump(mode="json"):
         raise HTTPException(409, "Execution scope differs from the event scope")
     # Bind completion to this attempt so an older worker cannot finish a retry.
     expected_attempt = (row.attempt_count or 0) + 1
