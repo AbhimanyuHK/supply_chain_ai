@@ -299,3 +299,24 @@ class PlanningRun(TimestampMixin, Base):
             "ix_planning_runs_cache_lookup", "scope_key", "data_fingerprint", "llm_provider", "llm_model"
         ),
     )
+
+
+class PlanApproval(TimestampMixin, Base):
+    __tablename__ = "plan_approvals"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    planning_run_id: Mapped[int] = mapped_column(ForeignKey("planning_runs.id"), unique=True, nullable=False)
+    strategy: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    reviewer: Mapped[str | None] = mapped_column(String(128))
+    reason: Mapped[str | None] = mapped_column(Text)
+
+
+class ReplanningEvent(TimestampMixin, Base):
+    __tablename__ = "replanning_events"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    magnitude: Mapped[float] = mapped_column(Numeric(12, 5), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
