@@ -87,3 +87,42 @@ async def ingest_event(event: SupplyChainEvent, db: AsyncSession = Depends(get_d
     ))
     await db.flush()
     return {"event_id": event.event_id, "action": action, "duplicate": False}
+
+
+class ExecuteEventInput(BaseModel):
+    request: "PlanningRequest"
+
+
+@router.post("/events/{event_id}/execute", dependencies=[Depends(require_operator)])
+async def execute_replanning_event(
+    event_id: str, body: ExecuteEventInput, db: AsyncSession = Depends(get_db),
+):
+    """Explicitly execute a queued event for a supplied planning scope.
+
+    This endpoint is synchronous and operator-triggered, not a queue worker.
+    Do not execute untrusted event scopes without operator review.
+    """
+    from app.agents.graph import run_planning_workflow
+    row = await db.scalar(select(ReplanningEvent).where(ReplanningEvent.event_id == event_id))
+    if row is None:
+        raise HTTPException(404, "Event not found")
+    if row.action != "queued":
+        raise HTTPException(409, "Event is not queued")
+    # Flush the claim before starting the workflow. Production multi-worker
+    # dispatch requires a transactional claim/lease mechanism.
+    row.action = "processing"
+    await db.commit()
+    try:
+        result = await run_planning_workflow(body.request, force_rerun=True)
+    except Exception:
+        row.action = "failed"
+        await db.commit()
+        raise
+    row.action = "processed"
+    await db.commit()
+    return {"event_id": event_id, "action": row.action,
+            "planning_run_id": result.get("planning_run_id")}
+
+
+from app.schemas.planning import PlanningRequest
+ExecuteEventInput.model_rebuild()
