@@ -107,6 +107,10 @@ async def committed_db():
         Fleet,
         Inventory,
         PlanningRun,
+        PlanningOutcome,
+        PlanApproval,
+        ReplanningEvent,
+        ShipmentCreationClaim,
         Product,
         Shipment,
         Store,
@@ -120,6 +124,10 @@ async def committed_db():
             # Shipment now has FKs to both PlanningRun and Fleet (Phase 2), so it
             # must be deleted before either of those, not after.
             Shipment,
+            PlanningOutcome,
+            PlanApproval,
+            ShipmentCreationClaim,
+            ReplanningEvent,
             PlanningRun,
             DistanceMatrix,
             DemandHistory,
