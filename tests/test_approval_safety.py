@@ -1,6 +1,5 @@
 """Safety regression tests for operator approval and event execution."""
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
